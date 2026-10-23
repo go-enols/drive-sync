@@ -1,4 +1,4 @@
-//! 剪切板载荷：跨平台内容规范化、压缩、去重哈希。
+﻿//! 剪切板载荷：跨平台内容规范化、压缩、去重哈希。
 
 use serde::{Deserialize, Serialize};
 
@@ -172,9 +172,9 @@ mod tests {
 
     #[test]
     fn text_roundtrip_and_integrity() {
-        let payload = ClipboardPayload::text("你好，derive-sync!").unwrap();
+        let payload = ClipboardPayload::text("你好，drive-sync!").unwrap();
         assert_eq!(payload.kind, ClipboardKind::Text);
-        assert_eq!(payload.as_text().unwrap(), "你好，derive-sync!");
+        assert_eq!(payload.as_text().unwrap(), "你好，drive-sync!");
         payload.verify_integrity().unwrap();
     }
 

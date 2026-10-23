@@ -1,7 +1,7 @@
-# derive-sync 基准测试报告（v0.1 原型）
+﻿# drive-sync 基准测试报告（v0.1 原型）
 
-> 工具：`crates/e2e-tests/src/bin/bench.rs`（`derive-bench`）
-> 端到端测试：`crates/e2e-tests/tests/*.rs`（`cargo test -p derive-e2e`）
+> 工具：`crates/e2e-tests/src/bin/bench.rs`（`drive-bench`）
+> 端到端测试：`crates/e2e-tests/tests/*.rs`（`cargo test -p drive-e2e`）
 > 本报告包含：延迟/吞吐/内存基准（中继默认限流与关闭限流两组口径）+ 阶段 2 双/多设备
 > 端到端测试覆盖清单 + 与架构文档验收指标的对照。
 >
@@ -16,7 +16,7 @@
 | 大文件吞吐（本机回环 50MB，64KiB 块） | > 20 MB/s | **108.08 MB/s**（windowed，端到端含 ack；wire 192.69 MB/s） | **110.01 MB/s** windowed / **195.78 MB/s** blast（无 ack） | **PASS**（约 5.4 倍余量） |
 | 中继 RSS（空载，100 连接） | < 100 MB | **27.5 MiB**（进程合计口径；见 §4.3） | 31.8 MiB（同口径） | **PASS**（口径受限，见 §5.2） |
 | E2E 握手（session_init/session_ack 经中继） | 无明确指标 | 0.496 ms | 0.561 ms | 参考 |
-| 端到端测试 | 全流程自动测试通过 | `cargo test -p derive-e2e`：**18 passed / 0 failed**（含配对永久性 2、撤销 3） | — | **PASS** |
+| 端到端测试 | 全流程自动测试通过 | `cargo test -p drive-e2e`：**18 passed / 0 failed**（含配对永久性 2、撤销 3） | — | **PASS** |
 
 **关键结论（限流口径）**：中继默认限流已从"200 帧/s + 超限丢帧"调整为
 **2000 帧/s、burst 4000、令牌不足先背压等待（最多 2s）不丢帧**（协议 §4.5 同步）。
@@ -54,12 +54,12 @@ ASCII-only 以兼容 PS5.1（UTF-8 无 BOM 的中文字面量会被误读）。
                      session_ack, relay}        同一进程内（bench 二进制）
 ```
 
-- 中继用公开 API `derive_relay::{RelayConfig, start}` 在 `127.0.0.1:0` 启动；
+- 中继用公开 API `drive_relay::{RelayConfig, start}` 在 `127.0.0.1:0` 启动；
   `RelayHandle.ws_url()` 得到 `ws://127.0.0.1:<port>/ws`。
 - 两个客户端是**真实 WebSocket 连接**（tokio-tungstenite），各自用
   `Identity::generate` 生成 Ed25519+X25519 长期身份；Hello 认证与生产一致
-  （`hello_sign_input` = `b"derive-sync-hello-v1" || nonce || device_id` + Ed25519 签名）。
-- `PairRecord` 直接构造（跳过配对码/SAS，密码学正确性由 `derive-core` 单测覆盖）；
+  （`hello_sign_input` = `b"drive-sync-hello-v1" || nonce || device_id` + Ed25519 签名）。
+- `PairRecord` 直接构造（跳过配对码/SAS，密码学正确性由 `drive-core` 单测覆盖）；
   E2E 会话走真实 `session_init`/`session_ack` 握手（经中继转发），后续业务消息为
   XChaCha20-Poly1305 `E2eEnvelope`（AAD 绑定 v/session/seq/kind/ts）。
 
@@ -102,8 +102,8 @@ PrivateMemorySize64（PowerShell `Get-Process`）。采样点：中继启动前�
 | 其余（单帧 8 MiB、配对 TTL 120s、暂存限额/TTL） | 默认 | 默认 | 未调整 |
 
 启动方式：
-- 默认限流组：`derive-bench --default-limits`（直接使用 `RelayConfig::default()` 限流参数）；
-- 关闭限流组：`derive-bench`（关闭限流测路径上限，历史口径，便于对照）。
+- 默认限流组：`drive-bench --default-limits`（直接使用 `RelayConfig::default()` 限流参数）；
+- 关闭限流组：`drive-bench`（关闭限流测路径上限，历史口径，便于对照）。
 
 ## 3. 结果
 
@@ -184,7 +184,7 @@ p95 0.22ms、p99 0.26ms，均在亚毫秒级；v0.1 的"JSON + base64 + 内存�
 - 默认限流组 windowed 50MiB 实测 108.08 MB/s、0 丢帧/0 `rate_limited`；
 - 结论：**默认配置已不与架构吞吐目标冲突**，无需为吞吐关闭限流。
 
-## 5. 端到端测试覆盖（`cargo test -p derive-e2e`：18 passed / 0 failed）
+## 5. 端到端测试覆盖（`cargo test -p drive-e2e`：18 passed / 0 failed）
 
 | 测试文件 | 用例 | 覆盖 |
 |---|---|---|
@@ -219,25 +219,25 @@ sleep 2s → 过期"无法经协议实现。`relay_vault_ttl.rs` 用等价语义
 
 ```powershell
 # 全部 e2e 测试
-powershell -NoProfile -File scripts/bench.ps1 -SkipTests        # 或直接 cargo test -p derive-e2e
+powershell -NoProfile -File scripts/bench.ps1 -SkipTests        # 或直接 cargo test -p drive-e2e
 
 # 默认限流（生产默认）release 基准
-$env:CARGO_HOME="D:\Code\derive-sync\.cargo-home"
-cargo run --release -p derive-e2e --bin derive-bench --offline -- `
+$env:CARGO_HOME="D:\Code\drive-sync\.cargo-home"
+cargo run --release -p drive-e2e --bin drive-bench --offline -- `
     --default-limits --json-out target/bench/bench-default-limits.json
 
 # 关闭限流（路径上限）release 基准
-cargo run --release -p derive-e2e --bin derive-bench --offline -- `
+cargo run --release -p drive-e2e --bin drive-bench --offline -- `
     --json-out target/bench/bench-limits-off.json
 
 # 快速冒烟（N=100，5MiB，20 连接）
-cargo run --release -p derive-e2e --bin derive-bench --offline -- --quick
+cargo run --release -p drive-e2e --bin drive-bench --offline -- --quick
 
 # 一键演示（relay + 双设备 + 配对 + 剪切板 + 目录/文件传输 + vault；CLI 串行）
 powershell -NoProfile -File scripts/demo.ps1
 ```
 
-`derive-bench --help` 查看全部参数（`--default-limits`、`--quick`、`--skip-rss`、
+`drive-bench --help` 查看全部参数（`--default-limits`、`--quick`、`--skip-rss`、
 `--print-json` 等）。JSON 字段：`rtt_1kb`、`throughput.{windowed,blast_no_ack}`、
 `memory.idle_connections`、`relay.config`、`verdict`。
 

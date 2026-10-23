@@ -1,4 +1,4 @@
-//! derive-sync 客户端同步引擎。
+﻿//! drive-sync 客户端同步引擎。
 //!
 //! 分层：
 //! - [`store`]：本地数据目录持久化（identity/peers/config/catalog/local_index/vault_keys/spool/incoming），
@@ -19,7 +19,7 @@
 //! ```no_run
 //! use std::path::PathBuf;
 //! use std::time::Duration;
-//! use derive_client::{pair_initiate, AutoPairUi, Runtime, RuntimeConfig, RuntimeEvent};
+//! use drive_client::{pair_initiate, AutoPairUi, Runtime, RuntimeConfig, RuntimeEvent};
 //!
 //! # async fn demo() -> anyhow::Result<()> {
 //! let data_dir = PathBuf::from("./deviceA-data");
@@ -42,8 +42,8 @@
 //! tokio::spawn(async move { runtime.run().await });
 //!
 //! // 3) 注入本机剪切板变化 / 目录操作 / 主动拉取文件
-//! handle.set_local_clipboard(derive_core::clipboard::ClipboardPayload::text("hello")?).await?;
-//! let entry_id = handle.catalog_add(derive_client::CatalogAddParams::new("demo.zip")).await?;
+//! handle.set_local_clipboard(drive_core::clipboard::ClipboardPayload::text("hello")?).await?;
+//! let entry_id = handle.catalog_add(drive_client::CatalogAddParams::new("demo.zip")).await?;
 //! handle.request_fetch("dev-peer", &entry_id).await?;
 //! # let _ = (&mut event_rx, clip_apply_rx, handle2);
 //! # Ok(())
@@ -79,11 +79,11 @@ pub use store::{
     VaultKey,
 };
 
-/// 协议版本（与 derive-core 保持一致）。
-pub use derive_core::PROTOCOL_VERSION;
+/// 协议版本（与 drive-core 保持一致）。
+pub use drive_core::PROTOCOL_VERSION;
 
 /// 单条剪切板载荷上限（超过应由调用方走文件中转，不阻塞剪切板链路）。
-pub const MAX_CLIPBOARD_BYTES: u64 = derive_core::clipboard::MAX_CLIPBOARD_BYTES;
+pub const MAX_CLIPBOARD_BYTES: u64 = drive_core::clipboard::MAX_CLIPBOARD_BYTES;
 
 /// 客户端库版本。
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1,4 +1,4 @@
-//! derive-sync 命令行客户端。
+﻿//! drive-sync 命令行客户端。
 //!
 //! 子命令：
 //! - `init --name <设备名>`：初始化身份与配置
@@ -9,7 +9,7 @@
 //! - `catalog add|list|remove|fetch`：软件目录（本体留在本地，云端只中转）
 //! - `vault put|list|get`：客户端加密的云端暂存（TTL ≤ 30 天）
 //!
-//! 全局参数：`--data-dir`（或环境变量 `DERIVE_SYNC_DATA_DIR`）、`--log-level`、
+//! 全局参数：`--data-dir`（或环境变量 `DRIVE_SYNC_DATA_DIR`）、`--log-level`、
 //! `--relay`、`--token`。
 //!
 //! 日志一律写 stderr（只含类型/大小/设备 id，不打印内容明文）；stdout 只输出命令结果。
@@ -27,21 +27,21 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use derive_client::Store;
+use drive_client::Store;
 
 use crate::common::App;
 
 #[derive(Parser)]
 #[command(
-    name = "derive-sync",
+    name = "drive-sync",
     version,
-    about = "derive-sync 桌面同步客户端：共享剪切板 + 软件目录 + 可选加密暂存",
+    about = "drive-sync 桌面同步客户端：共享剪切板 + 软件目录 + 可选加密暂存",
     long_about = None,
     subcommand_required = true,
     arg_required_else_help = true
 )]
 struct Cli {
-    /// 数据目录（默认使用平台数据目录；也可用 DERIVE_SYNC_DATA_DIR）
+    /// 数据目录（默认使用平台数据目录；也可用 DRIVE_SYNC_DATA_DIR）
     #[arg(long, global = true, value_name = "DIR")]
     data_dir: Option<PathBuf>,
 
@@ -179,6 +179,6 @@ fn init(app: &App, name: &str) -> Result<()> {
             config.relay_url.clone()
         }
     );
-    println!("下一步: 运行 `derive-sync pair` 与其他设备配对，然后 `derive-sync daemon` 常驻同步。");
+    println!("下一步: 运行 `drive-sync pair` 与其他设备配对，然后 `drive-sync daemon` 常驻同步。");
     Ok(())
 }

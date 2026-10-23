@@ -1,4 +1,4 @@
-//! `vault` 子命令：put / list / get（客户端加密的 30 天暂存）。
+﻿//! `vault` 子命令：put / list / get（客户端加密的 30 天暂存）。
 //!
 //! 上传前用随机 32 字节对象密钥做 XChaCha20-Poly1305 加密，密钥只存本地
 //! `vault_keys.json`；daemon 在线时通过 E2E 通道把密钥共享给已配对设备。
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
-use derive_core::vault::MAX_VAULT_TTL_SECS;
+use drive_core::vault::MAX_VAULT_TTL_SECS;
 
 use crate::common::{format_ms, human_bytes, App};
 
@@ -46,7 +46,7 @@ async fn put(app: &App, path: PathBuf, ttl_days: u64) -> Result<()> {
     let store = app.store()?;
     let config = app.runtime_config(&store)?;
     println!("正在加密并上传（TTL {ttl_days} 天，上限 30 天）…");
-    let outcome = derive_client::ops::vault_put(&config, &path, ttl_days).await?;
+    let outcome = drive_client::ops::vault_put(&config, &path, ttl_days).await?;
     println!("上传成功！");
     println!("  对象 ID: {}", outcome.object_id);
     println!(
@@ -63,7 +63,7 @@ async fn put(app: &App, path: PathBuf, ttl_days: u64) -> Result<()> {
 async fn list(app: &App) -> Result<()> {
     let store = app.store()?;
     let config = app.runtime_config(&store)?;
-    let objects = derive_client::ops::vault_list(&config).await?;
+    let objects = drive_client::ops::vault_list(&config).await?;
     if objects.is_empty() {
         println!("云端暂无暂存对象。");
         return Ok(());
@@ -97,7 +97,7 @@ async fn get(app: &App, object_id: &str, out: PathBuf) -> Result<()> {
         );
     }
     println!("正在下载并解密 {object_id} …");
-    let path = derive_client::ops::vault_get(&config, object_id, &out).await?;
+    let path = drive_client::ops::vault_get(&config, object_id, &out).await?;
     println!("已保存到: {}", path.display());
     Ok(())
 }

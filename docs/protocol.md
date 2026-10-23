@@ -1,6 +1,6 @@
-# derive-sync 协议规范 v0.1
+﻿# drive-sync 协议规范 v0.1
 
-> 状态：原型实现基准（2026-10）。实现代码见 `crates/core`，本文档与 `derive-core` 中的类型一一对应。
+> 状态：原型实现基准（2026-10）。实现代码见 `crates/core`，本文档与 `drive-core` 中的类型一一对应。
 > 变更协议必须同步修改：`crates/core` 类型、本文档、`crates/e2e-tests` 互操作测试。
 
 ## 0. 术语
@@ -68,7 +68,7 @@
 {"t":"hello","v":1,"device":{...PublicIdentity...},"access_token":"<自建服务器共享令牌>","nonce":"<32 hex 随机>","signature":"<128 hex>"}
 ```
 
-`signature = Ed25519_sign(ed_secret, b"derive-sync-hello-v1" || nonce || device_id)`。
+`signature = Ed25519_sign(ed_secret, b"drive-sync-hello-v1" || nonce || device_id)`。
 
 3. 中继校验：
    - `v` 版本匹配、token 常量时间比较、`PublicIdentity::is_consistent()`、签名有效（否则关闭连接）；
@@ -168,8 +168,8 @@ A(已运行)                             中继                         B(输入
 - 密钥派生（两端必须字节级一致）：
   1. `sides = [{device_id, name, ed_public_hex, x_public_hex, ephemeral_pub_hex} × 2]`，按 `device_id` 字典序排序；
   2. `transcript = canonical_json({v:1, code_hash: hex(BLAKE3(code)), sides})`；
-  3. `shared = HKDF-SHA256(X25519(eph_self, eph_peer), salt=BLAKE3(transcript), info="derive-sync-pairing-key-v1", 32)`；
-  4. `sas_bytes = HKDF-SHA256(shared, salt="derive-sync-sas-v1", info="sas", 4)`，`n = u32::from_be_bytes(sas_bytes) % 1_000_000`，显示为 `"%03d %03d"`（如 `042 917`）。
+  3. `shared = HKDF-SHA256(X25519(eph_self, eph_peer), salt=BLAKE3(transcript), info="drive-sync-pairing-key-v1", 32)`；
+  4. `sas_bytes = HKDF-SHA256(shared, salt="drive-sync-sas-v1", info="sas", 4)`，`n = u32::from_be_bytes(sas_bytes) % 1_000_000`，显示为 `"%03d %03d"`（如 `042 917`）。
 - 二维码/带外确认可以跳过人工比对（扫码即认证），但 CLI 仍打印 SAS 供核对。
 - `pairing_fingerprint = hex(BLAKE3(shared))[..16]`，写入 PairRecord，用于两端审计；**不保存 shared/pairing key**。
 - 配对完成即长期信任；后续连接用 §6 会话握手自动认证。
@@ -182,7 +182,7 @@ A(已运行)                             中继                         B(输入
 
 ### 5.2 解除配对（撤销信任）
 
-唯一能让配对失效的操作是**任一方显式删除本地配对记录**（CLI：`derive-sync peers remove <device_id>`）；此外删除 `identity.json`（换新身份）等同于该设备全部配对失效，需要重新配对。
+唯一能让配对失效的操作是**任一方显式删除本地配对记录**（CLI：`drive-sync peers remove <device_id>`）；此外删除 `identity.json`（换新身份）等同于该设备全部配对失效，需要重新配对。
 
 撤销语义：
 
@@ -201,7 +201,7 @@ A(已运行)                             中继                         B(输入
 {"content":{"v":1,"from":"dev-a","to":"dev-b","session_id":"<24 hex>","ephemeral_pub":"<64 hex>","ed_public":"<64 hex>","created_at_ms":0},"signature":"<128 hex>"}
 ```
 
-`signature = Ed25519_sign(ed_priv, b"derive-sync-session-init-v1" || canonical_json(content))`。
+`signature = Ed25519_sign(ed_priv, b"drive-sync-session-init-v1" || canonical_json(content))`。
 
 2. 对端校验：版本、`from == 期望配对设备`、`ed_public == PairRecord.peer.ed_public`、`to == 本机`、签名。通过后用自身临时 X25519 生成 `session_ack`：
 
@@ -209,12 +209,12 @@ A(已运行)                             中继                         B(输入
 {"content":{"v":1,"session_id":"<同 init>","from":"dev-b","to":"dev-a","ephemeral_pub":"<64 hex>","created_at_ms":0},"signature":"<128 hex>"}
 ```
 
-`signature = Ed25519_sign(ed_priv, b"derive-sync-session-ack-v1" || BLAKE3(canonical_json(init.content)) || canonical_json(ack.content))`。
+`signature = Ed25519_sign(ed_priv, b"drive-sync-session-ack-v1" || BLAKE3(canonical_json(init.content)) || canonical_json(ack.content))`。
 
 3. 双方派生密钥：
    - `shared = X25519(eph_self, eph_peer)`；
    - `transcript = canonical_json({v:1, session_id, sides:[{device_id, ephemeral_pub_hex, ed_public_hex}] 按 device_id 排序})`；
-   - `okm = HKDF-SHA256(shared, salt=BLAKE3(transcript), info="derive-sync-session-keys-v1", 64)`；
+   - `okm = HKDF-SHA256(shared, salt=BLAKE3(transcript), info="drive-sync-session-keys-v1", 64)`；
    - `device_id` 小的方向：`send_key = okm[0..32], recv_key = okm[32..64]`；另一方相反。
 4. 会话建立后所有业务消息（PeerMessage）以 `E2eEnvelope` 加密并经 `relay` 转发：
 
@@ -367,15 +367,15 @@ A(已运行)                             中继                         B(输入
 
 | crate | 职责 | 负责人 |
 |---|---|---|
-| `derive-core` | 身份、密码学、配对、会话、wire 类型、目录 CRDT、传输清单、剪切板载荷（**已完成，视为冻结接口**） | Lead |
-| `derive-relay` (lib + bin) | WS 中继：Hello 认证、presence、配对路由、转发、暂存 + TTL 清理、`/healthz`、指标日志 | server-impl 队友 |
-| `derive-client` | `Store` 本地持久化、`Engine` 同步状态机（会话管理、剪切板去重、目录同步、传输收发、spool）、`net` WS 客户端 | client-impl 队友 |
-| `derive-cli` | `derive-sync` 命令：`init/pair/daemon/status/catalog/relay/vault`；Windows/Linux 剪切板后端（arboard + 变更检测）；文件模式（测试用） | client-impl 队友 |
-| `derive-e2e` | 端到端测试（进程内中继 + 双客户端）、延迟基准 `derive-bench`、演示脚本 | qa 队友 |
+| `drive-core` | 身份、密码学、配对、会话、wire 类型、目录 CRDT、传输清单、剪切板载荷（**已完成，视为冻结接口**） | Lead |
+| `drive-relay` (lib + bin) | WS 中继：Hello 认证、presence、配对路由、转发、暂存 + TTL 清理、`/healthz`、指标日志 | server-impl 队友 |
+| `drive-client` | `Store` 本地持久化、`Engine` 同步状态机（会话管理、剪切板去重、目录同步、传输收发、spool）、`net` WS 客户端 | client-impl 队友 |
+| `drive-cli` | `drive-sync` 命令：`init/pair/daemon/status/catalog/relay/vault`；Windows/Linux 剪切板后端（arboard + 变更检测）；文件模式（测试用） | client-impl 队友 |
+| `drive-e2e` | 端到端测试（进程内中继 + 双客户端）、延迟基准 `drive-bench`、演示脚本 | qa 队友 |
 
 实现要求：
 
-1. 不得修改 `derive-core` 公开类型/语义，除非同步更新本文档并由 Lead 确认（接口冻结，避免并行冲突）。
+1. 不得修改 `drive-core` 公开类型/语义，除非同步更新本文档并由 Lead 确认（接口冻结，避免并行冲突）。
 2. 中继不得落盘任何转发内容；暂存只存密文；日志禁止打印内容/文件名/access_token。
 3. 客户端所有内容发送前必须经 E2E 会话加密；未建立会话时排队，不得明文发送。
 4. 错误处理：协议错误记录日志并断开/重建会话，不得 panic。

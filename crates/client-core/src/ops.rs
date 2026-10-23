@@ -1,4 +1,4 @@
-//! 一次性连接辅助命令：配对（A 端发起 / B 端加入）、云端暂存 put/list/get、目录下载。
+﻿//! 一次性连接辅助命令：配对（A 端发起 / B 端加入）、云端暂存 put/list/get、目录下载。
 //!
 //! 这些操作不需要常驻 daemon：各自建立一条中继连接、完成一次交互后关闭。
 //! 配对助手支持非交互（`--yes` / e2e 自动确认 SAS），其余日志不打印内容明文。
@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use derive_core::crypto::seal;
-use derive_core::identity::{Identity, PublicIdentity};
-use derive_core::pairing::{decode_qr, PairInvite, PairingInitiator};
-use derive_core::util::{blake3_hex, now_ms, random_hex};
-use derive_core::vault::{effective_ttl_secs, VaultMeta, VaultObjectInfo, MAX_VAULT_TTL_SECS};
-use derive_core::wire::{ClientToServer, ServerToClient};
+use drive_core::crypto::seal;
+use drive_core::identity::{Identity, PublicIdentity};
+use drive_core::pairing::{decode_qr, PairInvite, PairingInitiator};
+use drive_core::util::{blake3_hex, now_ms, random_hex};
+use drive_core::vault::{effective_ttl_secs, VaultMeta, VaultObjectInfo, MAX_VAULT_TTL_SECS};
+use drive_core::wire::{ClientToServer, ServerToClient};
 use tokio::sync::mpsc;
 
 use crate::engine::RuntimeEvent;
@@ -162,7 +162,7 @@ pub async fn pair_pairwise(
 /// 配对结果。
 #[derive(Clone, Debug)]
 pub struct PairOutcome {
-    pub record: derive_core::pairing::PairRecord,
+    pub record: drive_core::pairing::PairRecord,
     pub sas: String,
 }
 
@@ -434,7 +434,7 @@ pub async fn vault_put(
         entry_id: None,
         note: String::new(),
     };
-    let key = derive_core::crypto::random_key();
+    let key = drive_core::crypto::random_key();
     let ciphertext = seal(&key, object_id.as_bytes(), &data)
         .map_err(|error| anyhow!("加密失败: {error}"))?;
     let requested_ttl = ttl_days.saturating_mul(24 * 60 * 60);
@@ -550,7 +550,7 @@ pub async fn vault_get(
             }
             let meta = meta.ok_or_else(|| anyhow!("中继响应缺少对象元数据"))?;
             let ciphertext = ciphertext.ok_or_else(|| anyhow!("中继响应缺少密文"))?;
-            let plaintext = derive_core::crypto::open(&key, object_id.as_bytes(), &ciphertext)
+            let plaintext = drive_core::crypto::open(&key, object_id.as_bytes(), &ciphertext)
                 .map_err(|error| anyhow!("解密失败（密钥不匹配或数据损坏）: {error}"))?;
             if plaintext.len() as u64 != meta.size {
                 bail!("解密后大小与元数据不一致");

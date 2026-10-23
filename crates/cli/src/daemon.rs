@@ -1,4 +1,4 @@
-//! `daemon` 子命令：常驻同步（连接循环 + 剪切板监听线程 + 事件摘要打印）。
+﻿//! `daemon` 子命令：常驻同步（连接循环 + 剪切板监听线程 + 事件摘要打印）。
 //!
 //! Ctrl-C 优雅退出：停止监听线程、关闭 WS 连接（Runtime::run 内的 shutdown 分支）。
 
@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use derive_client::{Runtime, RuntimeEvent};
+use drive_client::{Runtime, RuntimeEvent};
 
 use crate::clipboard;
 use crate::common::{format_now, App};
@@ -16,7 +16,7 @@ pub async fn run(app: &App, clipboard_spec: &str, poll_ms: u64) -> Result<()> {
     let store = app.store()?;
     if !store.identity_exists() {
         bail!(
-            "尚未初始化设备身份（{}）。请先运行 `derive-sync init --name <设备名>`",
+            "尚未初始化设备身份（{}）。请先运行 `drive-sync init --name <设备名>`",
             store.identity_path().display()
         );
     }
@@ -33,7 +33,7 @@ pub async fn run(app: &App, clipboard_spec: &str, poll_ms: u64) -> Result<()> {
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<RuntimeEvent>();
     let (apply_tx, apply_rx) =
-        std::sync::mpsc::channel::<derive_core::clipboard::ClipboardPayload>();
+        std::sync::mpsc::channel::<drive_core::clipboard::ClipboardPayload>();
     config.event_tx = Some(event_tx);
     config.remote_clipboard_tx = Some(apply_tx);
 
@@ -43,7 +43,7 @@ pub async fn run(app: &App, clipboard_spec: &str, poll_ms: u64) -> Result<()> {
     let clip_tx = handle.local_clipboard_sender();
     let thread_flag = shutdown_flag.clone();
     let watcher = std::thread::Builder::new()
-        .name("derive-sync-clipboard".to_string())
+        .name("drive-sync-clipboard".to_string())
         .spawn(move || {
             clipboard::run_watcher(backend, poll_ms, apply_rx, clip_tx, thread_flag);
         })
@@ -60,7 +60,7 @@ pub async fn run(app: &App, clipboard_spec: &str, poll_ms: u64) -> Result<()> {
         }
     });
 
-    println!("derive-sync 守护进程已启动");
+    println!("drive-sync 守护进程已启动");
     println!("  设备: {} ({})", identity.name, identity.device_id());
     println!("  中继: {relay_display}");
     println!("  数据目录: {data_dir_display}");

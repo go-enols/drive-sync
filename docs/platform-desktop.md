@@ -1,6 +1,6 @@
-# 桌面端平台实现调研（Windows / Linux）
+﻿# 桌面端平台实现调研（Windows / Linux）
 
-> 适用范围：derive-sync 桌面客户端（共享剪切板 + 软件目录表 + 可选加密云端暂存）在 Windows 10/11 与 Linux（X11 / Wayland）上的**平台层实现决策**。
+> 适用范围：drive-sync 桌面客户端（共享剪切板 + 软件目录表 + 可选加密云端暂存）在 Windows 10/11 与 Linux（X11 / Wayland）上的**平台层实现决策**。
 > 目标：让一个最小原型能直接照着做，同时标出"原型可简化"与"生产级必须做"的边界。
 > 调研时间：2026-10（2026-10-23 完成一轮补充核验）。调研方式：`web_fetch` 直抓官方原文（微软文档、freedesktop/X11/Wayland 规范与协议源码、KDE/GNOME 文档、主流开源项目源码/README）+ `web_search` 交叉核验（2026-10-23，重点复核 12 条关键结论与 §10 未决项）。搜索无法定论的条目在文中明确标注"需实测"；核验记录见文末 §12。
 > 与代码的对应关系：本文对齐 `crates/core/src/clipboard.rs`（`ClipboardKind` / `ClipboardPayload` / `ClipboardEvent`）、`crates/core/src/peer.rs`（`PeerMessage::Ping/Pong`）与 `crates/core/src/session.rs`（E2E 信封按连接 seq 严格有序）。
@@ -95,11 +95,11 @@ Windows 在 `Clipboard Formats` 文档中定义了 3 个**注册格式名**，�
 | `CanIncludeInClipboardHistory` | 序列化 `DWORD`：0=排除、1=显式允许 | 只影响本地剪贴板历史，不影响云同步 |
 | `CanUploadToCloudClipboard` | 序列化 `DWORD`：0=排除、1=显式允许 | 只影响云同步，不影响本地历史 |
 
-derive-sync 的支持策略（重要，涉及"敏感内容排除"）：
+drive-sync 的支持策略（重要，涉及"敏感内容排除"）：
 
 1. **读取侧**：检测到上述任一"排除"标记时，默认**不上行同步**（本地仍可记录一条"已拦截"的元事件用于提示）；这是密码管理器（KeePass、1Password、Bitwarden 等）与 Windows 剪贴板历史交互的既有约定，尊重它比自创规则更可靠。
 2. **写入侧**：当我们把远端内容放到本机剪贴板时，按内容敏感级别写入 `CanIncludeInClipboardHistory = 0`（例如来自"私密剪切板"或一次性验证码），避免二次泄漏到系统历史/云剪贴板；对普通内容写入 `= 1`。
-3. 另外维护一层 `derive-sync` 自己的敏感规则（正则 + 用户排除的应用/标题），但这是**附加**，不能替代平台约定。
+3. 另外维护一层 `drive-sync` 自己的敏感规则（正则 + 用户排除的应用/标题），但这是**附加**，不能替代平台约定。
 4. 注意：这些是"我们希望别人尊重"的标记，Windows 上无法强制所有程序不读取——不要宣称"密码不会被其它剪贴板工具看到"。
 
 Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），GPaste 等管理器据此把内容当密码处理（[GPaste README](https://github.com/Keruspe/GPaste)）；Wayland 下通过 data-control 的 MIME 列表可见，看到该类型即视为敏感内容。
@@ -220,7 +220,7 @@ Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），
 - 正确形态：**用户会话内的托盘程序**。
   - 托盘：`Shell_NotifyIcon`（`NIM_ADD`/`NIM_MODIFY`/`NIM_DELETE`），Rust 用 `tray-icon`（[Shell_NotifyIcon](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyicona)）。
   - 隐藏消息窗口承接 `WM_CLIPBOARDUPDATE` / `WM_POWERBROADCAST` / 托盘回调消息；与 `winit` 事件循环合用，或独立线程消息泵。
-  - 单实例：`CreateMutexW` 命名互斥（`Local\derive-sync`），第二个实例把激活请求通过本地 socket/`WM_COPYDATA` 转给已运行实例后退出。
+  - 单实例：`CreateMutexW` 命名互斥（`Local\drive-sync`），第二个实例把激活请求通过本地 socket/`WM_COPYDATA` 转给已运行实例后退出。
 - 自启动（原型推荐）：**HKCU\Software\Microsoft\Windows\CurrentVersion\Run**，写入命令行（≤260 字符），无需管理员、无 UAC。注意微软文档说明系统可能**故意延迟** Run 键程序的启动（"does not provide guarantees about how promptly the programs in the Run key are run"），以及 Run/RunOnce 的语义（[Run and RunOnce Registry Keys](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)）。
   - 生产可选：任务计划（Logon 触发器，可"最高权限"运行、启动更可控），但创建计划任务需要额外权限且用户体验更重。
 - **无头模式（Windows）**：可以做（`--headless` 不进托盘），但仍然必须运行在交互用户会话内（否则没有剪贴板）。真正"无会话"的 Windows 场景只适合中继/文件同步，不适合剪贴板。
@@ -228,7 +228,7 @@ Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），
 ### 3.2 Linux：systemd user unit 与 XDG autostart
 
 - **XDG autostart**：把 `.desktop` 放到 `~/.config/autostart/`（或 `/etc/xdg/autostart/`），桌面环境登录时启动；`Hidden=true` 可禁用同名系统项（[ArchWiki: XDG Autostart](https://wiki.archlinux.org/title/XDG_Autostart)、[规范](https://specifications.freedesktop.org/autostart-spec/latest/)）。优点：由桌面环境启动，**继承完整的图形会话环境变量**（`DISPLAY`/`WAYLAND_DISPLAY`/`XDG_RUNTIME_DIR`/DBus），对剪贴板访问最友好。这是**默认推荐**。
-- **systemd user unit**：适合需要 `Restart=`、日志统一、依赖顺序的场景。写 `~/.config/systemd/user/derive-sync.service`，`WantedBy=graphical-session.target`（或 `default.target`）。坑：
+- **systemd user unit**：适合需要 `Restart=`、日志统一、依赖顺序的场景。写 `~/.config/systemd/user/drive-sync.service`，`WantedBy=graphical-session.target`（或 `default.target`）。坑：
   - user 实例默认在**首次登录**时才启动、最后一个会话结束时被杀；要脱离登录常驻需要 `loginctl enable-linger`，但 linger 的服务**运行在会话之外**，ArchWiki 明确提示"programs that need to be run inside a session will probably break in user services"（[ArchWiki: systemd/User](https://wiki.archlinux.org/title/Systemd/User)）。剪贴板正是"需要会话"的资源，**linger 的方案不要用于剪贴板主功能**。
   - 环境变量不会从 `.bashrc` 继承；`DISPLAY`/`XAUTHORITY` 在 X11 下由 `/etc/X11/xinit/xinitrc.d/50-systemd-user.sh` 导入；Wayland 需要自己 `systemctl --user import-environment WAYLAND_DISPLAY` 或走 `graphical-session.target` 配套机制（同上）。
   - 结论：**systemd unit 也要 `PartOf=graphical-session.target`，并确保图形会话启动时导入环境**；如果只交付 XDG autostart，MVP 更稳。
@@ -237,7 +237,7 @@ Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），
 ### 3.3 建议的进程模型
 
 ```
-┌──────────────────────── derive-sync (单进程, 默认 tray 模式) ────────────────────────┐
+┌──────────────────────── drive-sync (单进程, 默认 tray 模式) ────────────────────────┐
 │  tokio runtime (网络/会话/加密/目录)        platform thread(s)                        │
 │  ├─ relay/直连连接管理                       ├─ Win32 消息泵 (剪贴板/电源/托盘)        │
 │  ├─ PeerMessage 分发                         ├─ X11 事件循环 (XFixes)                 │
@@ -247,7 +247,7 @@ Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），
 ```
 
 - MVP：**单进程**，平台线程通过 `tokio::sync::mpsc`/`flume` 把事件送进异步侧；避免为了"架构漂亮"先拆 daemon+UI（IPC、生命周期、权限都会翻倍）。
-- 生产再考虑拆分：`derive-sync-daemon`（无 UI，供 headless/服务器）+ `derive-sync-tray`（UI）通过本地 socket 通信；拆分的前提是**剪贴板后端必须在有会话的进程里**。
+- 生产再考虑拆分：`drive-sync-daemon`（无 UI，供 headless/服务器）+ `drive-sync-tray`（UI）通过本地 socket 通信；拆分的前提是**剪贴板后端必须在有会话的进程里**。
 
 ---
 
@@ -319,7 +319,7 @@ Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），
 ### 5.2 mDNS 设计（建议照抄的字段）
 
 - 服务类型：`_derivesync._tcp.local.`（如果将来加 QUIC：`_derivesync._udp.local.`，或同一 TXT 里声明 `proto=quic`）。
-- 实例名：`derive-sync-<device_short_id>`（避免重名；`mdns-sd` 实现了 RFC 6762 §9 的冲突解决并在冲突时改名，见 [mdns-sd](https://docs.rs/mdns-sd/latest/mdns_sd/)）。
+- 实例名：`drive-sync-<device_short_id>`（避免重名；`mdns-sd` 实现了 RFC 6762 §9 的冲突解决并在冲突时改名，见 [mdns-sd](https://docs.rs/mdns-sd/latest/mdns_sd/)）。
 - TXT 记录建议：
 
 | key | 示例 | 说明 |
@@ -387,7 +387,7 @@ Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），
 | Flatpak | 沙箱、集中分发、权限模型清晰 | 默认无网络/无 X11，需 `--share=network`、`--socket=wayland`（[Sandbox Permissions](https://docs.flatpak.org/en/latest/sandbox-permissions.html)）；后台常驻需 Background portal，GNOME 剪贴板管理器仍要 Shell 扩展而沙箱内无法注册（CopyQ 文档）；Flatpak 1.15/1.16 引入 Wayland security-context 集成（供合成器识别应用身份，1.16 前有已知回归 [issue #6019](https://github.com/flatpak/flatpak/issues/6019)，[PR #6018](https://github.com/flatpak/flatpak/pull/6018) 修复），但它**不定义协议白名单**，data-control 是否可用仍取决于合成器 | 🟡 后期，需专项验证 |
 | Snap | 类似 Flatpak | 同上；AppArmor 不中介剪贴板协议内容，但 Snap 的后台/自启动与 GNOME Shell 扩展注册同样受限；未见 snapd 过滤 Wayland 协议的公开证据，需实测 | 🟡 后期 |
 
-- 打包时要把 **XDG autostart 文件**（`~/.config/autostart/derive-sync.desktop` 的模板）或 **systemd user unit** 作为安装内容/首次运行生成内容；注意 `Exec=` 用绝对路径，`X-GNOME-Autostart-Delay` 可加延迟。
+- 打包时要把 **XDG autostart 文件**（`~/.config/autostart/drive-sync.desktop` 的模板）或 **systemd user unit** 作为安装内容/首次运行生成内容；注意 `Exec=` 用绝对路径，`X-GNOME-Autostart-Delay` 可加延迟。
 - 不要用 system service 跑剪贴板（§3.2）。
 
 ### 6.3 自动更新
@@ -477,7 +477,7 @@ Linux 侧对应约定是 KDE 的 `x-kde-passwordManagerHint`（MIME 类型），
    - Wayland：`wl-clipboard-rs` 探测 data-control + `Watcher`；KDE/wlroots 验证；GNOME 先明确"不支持"。
 4. **回环抑制**：BLAKE3 哈希 + 2s 时间窗（复用 `ClipboardPayload.hash`）。
 5. **常驻形态**：单进程托盘（Windows `tray-icon`；Linux 先跑 CLI/无托盘，用 XDG autostart 启动）。
-6. **自启动**：Windows 写 HKCU Run；Linux 写 `~/.config/autostart/derive-sync.desktop`。
+6. **自启动**：Windows 写 HKCU Run；Linux 写 `~/.config/autostart/drive-sync.desktop`。
 7. **保活**：应用层 Ping 30s + pong 10s 超时 + 指数退避重连（当前 `PeerMessage` 已有 Ping/Pong，补计时与失败判定）。
 8. **休眠恢复**：Windows `WM_POWERBROADCAST` / Linux logind `PrepareForSleep` → 重连 + 对齐。
 9. **mDNS 发现**：`mdns-sd` 注册 `_derivesync._tcp.local.` + TXT（先只做发现，不做直连）。

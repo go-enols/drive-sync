@@ -1,4 +1,4 @@
-//! `derive-bench`：derive-sync 端到端加密转发延迟与吞吐基准。
+﻿//! `drive-bench`：drive-sync 端到端加密转发延迟与吞吐基准。
 //!
 //! 测试拓扑（全部在单进程内，中继监听 `127.0.0.1:0`，端口随机）：
 //!
@@ -20,24 +20,24 @@
 //!    WorkingSet/Private 内存（含中继+客户端），并通过 presence 观测中继侧在线连接数
 //!    （另开 N 条空闲已认证连接，对照架构文档"空载 100 连接 < 100MB"）。
 //!
-//! 输出：人类可读表格（stdout）+ JSON（`--json-out`，默认 `target/bench/derive-bench.json`）。
+//! 输出：人类可读表格（stdout）+ JSON（`--json-out`，默认 `target/bench/drive-bench.json`）。
 //!
 //! 用法：
 //! ```text
-//! cargo run --release -p derive-e2e --bin derive-bench
-//! cargo run --release -p derive-e2e --bin derive-bench -- --quick
-//! cargo run --release -p derive-e2e --bin derive-bench -- --rtt-n 2000 --total-mib 100 --json-out out.json
+//! cargo run --release -p drive-e2e --bin drive-bench
+//! cargo run --release -p drive-e2e --bin drive-bench -- --quick
+//! cargo run --release -p drive-e2e --bin drive-bench -- --rtt-n 2000 --total-mib 100 --json-out out.json
 //! ```
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use derive_core::identity::Identity;
-use derive_core::peer::PeerMessage;
-use derive_core::session::Session;
-use derive_core::wire::{ClientToServer, ServerToClient};
-use derive_e2e::harness::{
+use drive_core::identity::Identity;
+use drive_core::peer::PeerMessage;
+use drive_core::session::Session;
+use drive_core::wire::{ClientToServer, ServerToClient};
+use drive_e2e::harness::{
     bench_relay_config, clipboard_message, establish_pair, latency_stats, pair_records,
     process_memory, random_data, relay_config, start_relay, text_payload, ProcessMemory,
     RelayClient, DEFAULT_TOKEN,
@@ -84,7 +84,7 @@ impl Default for Args {
             idle_conns: 100,
             skip_rss: false,
             print_json: false,
-            json_out: PathBuf::from("target/bench/derive-bench.json"),
+            json_out: PathBuf::from("target/bench/drive-bench.json"),
             default_limits: false,
             quick: false,
             help: false,
@@ -162,9 +162,9 @@ fn parse_usize(name: &str, value: Option<String>) -> Result<usize> {
 fn print_help() {
     println!(
         "\
-derive-bench — derive-sync 端到端加密转发基准
+drive-bench — drive-sync 端到端加密转发基准
 
-用法: derive-bench [选项]
+用法: drive-bench [选项]
 
 选项:
   --quick            快速模式（RTT N=100、吞吐 5MiB、空闲连接 20）
@@ -176,7 +176,7 @@ derive-bench — derive-sync 端到端加密转发基准
   --skip-rss         跳过进程内存采样（PowerShell 采样较慢）
   --default-limits   使用中继默认限流配置（2000 帧/s、burst 4000、2s 背压等待）；
                      默认关闭限速以测量转发/加密路径上限。两种口径可各跑一次对比。
-  --json-out <PATH>  JSON 结果输出路径（默认 target/bench/derive-bench.json）
+  --json-out <PATH>  JSON 结果输出路径（默认 target/bench/drive-bench.json）
   --print-json       同时把 JSON 打印到 stdout
   -h, --help         显示帮助"
     );
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
         .try_init();
 
     let generated_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let environment = derive_e2e::harness::environment_info();
+    let environment = drive_e2e::harness::environment_info();
     let before_relay = sample_memory(&args);
 
     let bench_started = Instant::now();
@@ -224,7 +224,7 @@ async fn main() -> Result<()> {
     let relay = start_relay(relay_config).await?;
     let ws_url = relay.ws_url();
     println!(
-        "derive-bench: 中继已启动 {ws_url}（进程内，端口由系统分配；限流模式 = {}）",
+        "drive-bench: 中继已启动 {ws_url}（进程内，端口由系统分配；限流模式 = {}）",
         if args.default_limits {
             "默认配置 2000 帧/s + 背压"
         } else {
@@ -409,11 +409,11 @@ async fn run_bench(args: &Args, ws_url: &str, relay_info: Value) -> Result<Value
     });
 
     Ok(json!({
-        "schema": "derive-bench/v1",
+        "schema": "drive-bench/v1",
         "relay": {
             "ws_url": ws_url,
             "in_process": true,
-            "protocol_version": derive_core::PROTOCOL_VERSION,
+            "protocol_version": drive_core::PROTOCOL_VERSION,
             "config": relay_info,
         },
         "pairing": {
@@ -583,7 +583,7 @@ async fn run_windowed_throughput(
     let chunks = total_bytes / chunk_bytes;
     let a_id = a.device_id();
     let b_id = b.device_id();
-    let transfer_id = derive_core::util::random_hex(8);
+    let transfer_id = drive_core::util::random_hex(8);
     let chunk_data = random_data(chunk_bytes);
 
     // B 端任务：解密、校验偏移连续、按协议每 8 块（512KiB）回 ack。
@@ -735,7 +735,7 @@ async fn run_blast_no_ack(
     let chunk = chunk_bytes as u64;
     let chunks = total_bytes / chunk_bytes;
     let b_id = b.device_id();
-    let transfer_id = derive_core::util::random_hex(8);
+    let transfer_id = drive_core::util::random_hex(8);
     let chunk_data = random_data(chunk_bytes);
 
     // B 端任务：解密校验并统计；不向 A 回任何 ack。
@@ -948,7 +948,7 @@ fn memory_json(memory: ProcessMemory) -> Value {
 
 fn print_report(report: &Value) {
     println!();
-    println!("================ derive-bench 结果 ================");
+    println!("================ drive-bench 结果 ================");
     if let Some(environment) = report.get("environment") {
         println!(
             "环境: {}/{} {}，逻辑核 {}，rustc {}",

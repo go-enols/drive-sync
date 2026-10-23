@@ -1,4 +1,4 @@
-//! 阶段 2 端到端：2~3 设备并发（A 同时与 B、C 配对；B/C 未互相配对）。
+﻿//! 阶段 2 端到端：2~3 设备并发（A 同时与 B、C 配对；B/C 未互相配对）。
 //!
 //! 覆盖：
 //! 1. A↔B、A↔C 各建立 E2E 会话（B/C 之间不应建会话，见架构 §14 第 8 条）；
@@ -9,12 +9,12 @@
 use std::time::Duration;
 
 use anyhow::{bail, Result};
-use derive_client::{CatalogAddParams, RuntimeEvent};
-use derive_e2e::client_harness::{
+use drive_client::{CatalogAddParams, RuntimeEvent};
+use drive_e2e::client_harness::{
     event_summaries, file_blake3, pair_nodes, write_random_file, ClientNode, DEFAULT_EVENT_TIMEOUT,
     DEFAULT_TOKEN,
 };
-use derive_e2e::harness::{relay_config, start_relay};
+use drive_e2e::harness::{relay_config, start_relay};
 use tempfile::TempDir;
 
 const FILE_SIZE: usize = 1024 * 1024; // 1 MiB

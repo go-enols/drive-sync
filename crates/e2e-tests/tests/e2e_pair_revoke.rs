@@ -1,4 +1,4 @@
-//! 配对撤销 e2e 回归（task-7 中依赖 task-6 的部分）。
+﻿//! 配对撤销 e2e 回归（task-7 中依赖 task-6 的部分）。
 //!
 //! 需求：已配对设备除非任一方显式删除 `PairRecord`，否则永久有效；一旦删除：
 //! - 在线：对端应在秒级内收到 `PairRevoked`、双方删除 peer 记录、会话销毁、双向同步停止；
@@ -15,21 +15,21 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
-use derive_client::{RuntimeEvent, Store};
-use derive_e2e::client_harness::{
+use drive_client::{RuntimeEvent, Store};
+use drive_e2e::client_harness::{
     pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN,
 };
-use derive_e2e::harness::{relay_config, start_relay};
+use drive_e2e::harness::{relay_config, start_relay};
 use tempfile::TempDir;
 
-/// 外部管理进程删除本地 peer 记录（等价于 `derive-sync peers remove <id>`）。
+/// 外部管理进程删除本地 peer 记录（等价于 `drive-sync peers remove <id>`）。
 fn external_remove_peer(dir: &Path, device_id: &str) -> Result<bool> {
     let store = Store::open(dir)?;
     let removed = store.remove_peer(device_id)?;
     Ok(removed)
 }
 
-fn peers(dir: &Path) -> Result<Vec<derive_core::pairing::PairRecord>> {
+fn peers(dir: &Path) -> Result<Vec<drive_core::pairing::PairRecord>> {
     Ok(Store::open(dir)?.load_peers()?)
 }
 
@@ -101,7 +101,7 @@ async fn online_revoke_propagates_and_stops_sync() -> Result<()> {
         "before revoke"
     );
 
-    // A 侧外部删除 B（模拟另一个管理进程执行 `derive-sync peers remove <B>`）。
+    // A 侧外部删除 B（模拟另一个管理进程执行 `drive-sync peers remove <B>`）。
     let revoke_started = std::time::Instant::now();
     assert!(
         external_remove_peer(&dir_a, &b_id)?,

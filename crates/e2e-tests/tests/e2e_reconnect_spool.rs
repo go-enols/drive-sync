@@ -1,4 +1,4 @@
-//! 阶段 2 端到端：断线重连 + 离线 spool 补发 + 中继重启后的透明自动重连。
+﻿//! 阶段 2 端到端：断线重连 + 离线 spool 补发 + 中继重启后的透明自动重连。
 //!
 //! 两个场景：
 //! 1. [`spool_replay_after_peer_online`]：B 离线时 A 写入剪切板 → 事件进 A 本地 spool；
@@ -13,9 +13,9 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use derive_client::RuntimeEvent;
-use derive_e2e::client_harness::{pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN};
-use derive_e2e::harness::{relay_config, restart_relay_on, start_relay};
+use drive_client::RuntimeEvent;
+use drive_e2e::client_harness::{pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN};
+use drive_e2e::harness::{relay_config, restart_relay_on, start_relay};
 use tempfile::TempDir;
 
 fn init_tracing() {

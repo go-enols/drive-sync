@@ -1,4 +1,4 @@
-//! 同步状态机（纯同步逻辑，无网络依赖，可单测）。
+﻿//! 同步状态机（纯同步逻辑，无网络依赖，可单测）。
 //!
 //! Engine 负责：
 //! - 连接认证后的 `welcome`/`presence` 处理，按"device_id 字典序小的一方发起"规则做 E2E 会话握手；
@@ -17,18 +17,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use derive_core::catalog::{Catalog, CatalogEntry, CatalogOp, TargetPlatform};
-use derive_core::clipboard::{ClipboardEvent, ClipboardKind, ClipboardPayload};
-use derive_core::identity::Identity;
-use derive_core::pairing::PairRecord;
-use derive_core::peer::PeerMessage;
-use derive_core::session::{
+use drive_core::catalog::{Catalog, CatalogEntry, CatalogOp, TargetPlatform};
+use drive_core::clipboard::{ClipboardEvent, ClipboardKind, ClipboardPayload};
+use drive_core::identity::Identity;
+use drive_core::pairing::PairRecord;
+use drive_core::peer::PeerMessage;
+use drive_core::session::{
     accept_session_init, complete_session, create_session_init, Session, SessionInit,
 };
-use derive_core::transfer::TransferManifest;
-use derive_core::util::{now_ms, random_hex};
-use derive_core::vault::VaultMeta;
-use derive_core::wire::{ClientToServer, ServerToClient};
+use drive_core::transfer::TransferManifest;
+use drive_core::util::{now_ms, random_hex};
+use drive_core::vault::VaultMeta;
+use drive_core::wire::{ClientToServer, ServerToClient};
 
 use crate::dedupe::{AppliedRecord, RecentApplied, TimedLru};
 use crate::spool::{Spool, SpoolItem};
@@ -793,7 +793,7 @@ impl Engine {
     fn handle_session_init(
         &mut self,
         from: String,
-        msg: derive_core::session::SessionInitMsg,
+        msg: drive_core::session::SessionInitMsg,
     ) -> EngineOutput {
         let mut out = EngineOutput::default();
         // 同时握手裁决（字典序）：较小 id 侧是协议规定的发起方，优先保留它的 init。
@@ -841,7 +841,7 @@ impl Engine {
     fn handle_session_ack(
         &mut self,
         from: String,
-        msg: derive_core::session::SessionAckMsg,
+        msg: drive_core::session::SessionAckMsg,
     ) -> EngineOutput {
         let mut out = EngineOutput::default();
         let Some(pending) = self.pending_inits.remove(&from) else {
@@ -875,7 +875,7 @@ impl Engine {
     fn handle_relay(
         &mut self,
         from: String,
-        envelope: derive_core::session::E2eEnvelope,
+        envelope: drive_core::session::E2eEnvelope,
     ) -> EngineOutput {
         let mut out = EngineOutput::default();
         let decrypted = match self.sessions.get_mut(&from) {
@@ -2090,7 +2090,7 @@ impl Engine {
         }
     }
 
-    /// 检测其他进程（如 `derive-sync catalog add` / `vault put`）对本地状态文件的更新：
+    /// 检测其他进程（如 `drive-sync catalog add` / `vault put`）对本地状态文件的更新：
     /// 重新加载并广播给在线会话，避免"CLI 改了但 daemon 内存还是旧的"。
     fn detect_external_state_changes(&mut self, _now: u64, out: &mut EngineOutput) {
         // 目录（catalog.json）
@@ -2144,7 +2144,7 @@ impl Engine {
         self.detect_external_vault_changes(_now, out);
     }
 
-    /// 检测其他进程（如 `derive-sync vault put`）对 vault_keys.json 的更新，并补发 vault_share。
+    /// 检测其他进程（如 `drive-sync vault put`）对 vault_keys.json 的更新，并补发 vault_share。
     fn detect_external_vault_changes(&mut self, _now: u64, out: &mut EngineOutput) {
         let path = self.store.vault_keys_path();
         let mtime = self.store.file_mtime_ms(&path);
@@ -2170,7 +2170,7 @@ impl Engine {
         }
     }
 
-    /// 检测其他进程对 `peers.json` 的写入（`derive-sync peers remove` / `pair`）：
+    /// 检测其他进程对 `peers.json` 的写入（`drive-sync peers remove` / `pair`）：
     /// - 被删除的对端：先经现有会话尽力发送 `PairRevoked`，再销毁关系并 emit 事件；
     /// - 新增/更新的对端：重新加载，后续 presence/兜底逻辑会正常建立会话。
     fn detect_external_peer_changes(&mut self, now: u64, out: &mut EngineOutput) {

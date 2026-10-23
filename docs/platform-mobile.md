@@ -1,6 +1,6 @@
-# derive-sync 移动端平台调研：剪贴板、推送保活、后台限制与 30 天加密暂存合规
+﻿# drive-sync 移动端平台调研：剪贴板、推送保活、后台限制与 30 天加密暂存合规
 
-> 文档版本：v0.1（调研稿） · 调研/核验日期：2026-10-23 · 适用：derive-sync Android / iOS 客户端
+> 文档版本：v0.1（调研稿） · 调研/核验日期：2026-10-23 · 适用：drive-sync Android / iOS 客户端
 > 调研方式：**web_fetch 直抓官方原文 + web_search 交叉核验（2026-10-23）**。抓取来源包括 developer.android.com、firebase.google.com、developer.apple.com、support.apple.com、support.google.com、source.android.com、AOSP 源码、中国人大网/网信办、欧盟委员会；关键数字以官方原文为准，平台文档会随版本更新，合入 PRD 或排期前请按“参考来源”复核一次。
 
 ---
@@ -37,7 +37,7 @@
 - **覆盖**：Android 10→16 的剪贴板、Doze/App Standby、前台服务、WorkManager、FCM v1/v2、Google Play 政策；iOS 16+ 的 UIPasteboard/`UIPasteControl`、APNs、BGTaskScheduler、background URLSession、App Store 审核；30 天加密暂存的 GDPR/PIPL 注意点。
 - **口径**：
   - “官方文档”指平台厂商（Google/Apple）与监管机构（EUR-Lex/欧盟委员会、中国人大网/网信办）的原文；AOSP 源码用于补充官方文档未写明的实现细节，已单独标注。
-  - 文中数字、版本、API 名均来自所引页面；未标注来源的数字均为 derive-sync 的产品目标值（会明确写“目标值”）。
+  - 文中数字、版本、API 名均来自所引页面；未标注来源的数字均为 drive-sync 的产品目标值（会明确写“目标值”）。
 - **时效性注意（2026-10）**：
   - Google Play 自 **2026-08-31** 起要求新应用/更新 target **Android 16（API 36）**（Wear OS/Automotive/TV/XR 另有要求），见 [Play 目标 API 级别要求](https://support.google.com/googleplay/android-developer/answer/11926878)。
   - FCM 处于 v1→v2 迁移期：**Android 官方文档**（Doze / 应用待机分桶页面）已标注 v1 弃用、建议迁移 v2；Firebase 的 `AndroidConfigV2` 页面标注为**预览版**，见 [FCM AndroidConfigV2](https://firebase.google.com/docs/cloud-messaging/send/v2-api)。
@@ -84,7 +84,7 @@ API 文档给出了可观察到的行为（这一点对代码防御很重要）�
 #### 2.1.2 系统对“读剪贴板”的用户可见提示（不要忽略）
 
 - **Android 12+**：非剪贴板内容所有者、非 IME 的应用读取剪贴板时，系统会弹出提示（实现为 Toast，文案类似“XX 已从剪贴板粘贴”）。AOSP 的 `showAccessNotificationLocked()` 会按 UID+Clip 去重，默认受设备配置控制；该提示属于系统实现行为（官方开发者文档未单列，不同 OEM/版本可能不同）。来源：[AOSP `ClipboardService.java`](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/clipboard/ClipboardService.java)。
-  - **含义**：用户在前台用 derive-sync “读取剪贴板并发送”时，会看到系统的“derive-sync 已从剪贴板粘贴”提示——这是系统隐私特性，**不能也不应绕过**，产品文案要与之配合（例如按钮旁说明“将读取你刚复制的文本并发送”）。
+  - **含义**：用户在前台用 drive-sync “读取剪贴板并发送”时，会看到系统的“drive-sync 已从剪贴板粘贴”提示——这是系统隐私特性，**不能也不应绕过**，产品文案要与之配合（例如按钮旁说明“将读取你刚复制的文本并发送”）。
 - **Android 13+**：内容进入剪贴板时系统会显示**标准视觉确认界面**（含内容预览），应用不应再自己弹 Toast/Snackbar 重复提示；如需隐藏预览，必须给 `ClipDescription` 加敏感标记，见 [Android 复制和粘贴指南](https://developer.android.com/develop/ui/views/touch-and-input/copy-paste)。
 
 #### 2.1.3 写入：可以后台写，但要么让用户知道，要么别做
@@ -103,7 +103,7 @@ API 文档给出了可观察到的行为（这一点对代码防御很重要）�
 | 默认输入法（IME） | ✅（官方豁免） | 仅输入法进程存活/键盘活跃时可读；进程会被系统回收 | 可选“高级模式”，不建议默认：开发量大、隐私敏感、商店审核与用户信任成本高 |
 | AccessibilityService | ❌ 不在官方豁免列表内（官方豁免只有默认 IME 与焦点应用）；Play 政策严格限制其用途 | ❌ | **反模式，不采用**。Play 对无障碍 API 的声明/审核要求见 [Play AccessibilityService 政策](https://support.google.com/googleplay/android-developer/answer/10964491) |
 | 通知操作按钮 | 通知动作可打开 Activity/服务，但读取仍受焦点/锁屏限制 | ❌ | 适合“打开 App 复制”，不适合后台读 |
-| 分享面板（Sharesheet，`ACTION_SEND`） | 不需要读剪贴板，用户选中的文本直接传入 | ❌（但不需要） | **发送方向最佳降级路径**：用户从任意 App 分享文本到 derive-sync，见 [Android 分享简单数据](https://developer.android.com/training/sharing/send) |
+| 分享面板（Sharesheet，`ACTION_SEND`） | 不需要读剪贴板，用户选中的文本直接传入 | ❌（但不需要） | **发送方向最佳降级路径**：用户从任意 App 分享文本到 drive-sync，见 [Android 分享简单数据](https://developer.android.com/training/sharing/send) |
 | 快捷设置磁贴（TileService） | 点击磁贴可拉起 UI/前台服务 | ❌ | 快捷入口：一键“发送剪贴板”（需应用可见/有焦点后再读） |
 | WorkManager 定时任务 | ❌ | ❌ | 只用于拉取/重试，不能读剪贴板 |
 | 前台服务（FGS） | 不改变读取权限模型（不是 IME/焦点就读不到） | ❌ | 不能用来“后台读剪贴板”；见 2.2 的类型与政策限制 |
@@ -165,7 +165,7 @@ API 文档给出了可观察到的行为（这一点对代码防御很重要）�
   - Android 15 起，`BOOT_COMPLETED` 接收器**不能**启动 `dataSync` 类型 FGS。
   - Android 15 还收窄了 `SYSTEM_ALERT_WINDOW` 的启动豁免（必须有可见悬浮窗）。
 - **`dataSync` 的 Play 用例口径（非常关键）**：Play 政策要求 `dataSync` 用例是**用户发起**的传输/备份/导入导出；提交视频“不得展示全自动执行或在后台进行的备份/恢复任务”。见 [Play 前台服务要求中的 TYPE_DATA_SYNC 说明](https://support.google.com/googleplay/android-developer/answer/13392821)。
-  - **结论**：derive-sync **不能**用 `dataSync` FGS 来维持“服务器触发的自动同步/常驻连接”；`dataSync` 只能用于用户明确发起的一次传输（例如“立即同步”“发送大文件”）。后台自动同步应走 FCM + WorkManager/短连接，不启动 FGS。
+  - **结论**：drive-sync **不能**用 `dataSync` FGS 来维持“服务器触发的自动同步/常驻连接”；`dataSync` 只能用于用户明确发起的一次传输（例如“立即同步”“发送大文件”）。后台自动同步应走 FCM + WorkManager/短连接，不启动 FGS。
   - `remoteMessaging` 类型的官方用途是“把短信从一台设备转移到另一台设备，保障换机时消息连续性”，见 [前台服务类型](https://developer.android.com/develop/background-work/services/fg-service-types)；**不建议**用它包装剪贴板同步（用途不符 + 需要 Play 声明审核）。
 - **Android 8.0+ 通用后台限制**：后台服务在应用进入空闲后会被停止；多数隐式广播不能用清单注册；应改用 JobScheduler/WorkManager。见 [后台执行限制](https://developer.android.com/about/versions/oreo/background)。
 
@@ -193,8 +193,8 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 
 | 层级 | 交互 | 实现 | 说明 |
 |---|---|---|---|
-| L1 主路径 | 用户选中文本 → 系统分享面板 → derive-sync | `ACTION_SEND` + 分享目标 | 不需要剪贴板权限，无系统弹窗，见 [分享简单数据](https://developer.android.com/training/sharing/send) |
-| L2 快捷路径 | 用户打开 derive-sync → 点「发送剪贴板」 | 前台 Activity 有焦点 → `getPrimaryClip()` | 会触发 Android 12+ 系统“已从剪贴板粘贴”提示，属预期 |
+| L1 主路径 | 用户选中文本 → 系统分享面板 → drive-sync | `ACTION_SEND` + 分享目标 | 不需要剪贴板权限，无系统弹窗，见 [分享简单数据](https://developer.android.com/training/sharing/send) |
+| L2 快捷路径 | 用户打开 drive-sync → 点「发送剪贴板」 | 前台 Activity 有焦点 → `getPrimaryClip()` | 会触发 Android 12+ 系统“已从剪贴板粘贴”提示，属预期 |
 | L3 快捷入口 | 快捷设置磁贴 / 长按图标快捷方式 / 通知 | `TileService` 或 Shortcut 拉起 L2 | 见 [快捷设置磁贴](https://developer.android.com/develop/ui/views/quicksettings-tiles) |
 | L4 定时兜底 | 回前台时自动补同步 / 15 分钟周期任务 | 前台读取 + WorkManager | 只处理“应用内历史”，不能采集其他 App 的复制 |
 | 可选高级 | 用户显式启用“输入法模式” | 自定义默认 IME 在键盘活跃时读取剪贴板 | 开发/审核/隐私成本高，默认不做 |
@@ -220,7 +220,7 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 - **没有受支持的后台读取路径**：Apple 的剪贴板文档只描述用户复制/粘贴交互与用户意图判定，未提供任何后台/静默读取 API；不要设计后台采集。读取应发生在 App 前台、由用户手势触发（`UIPasteControl` 视为用户意图）。Apple 开发者论坛也有同类讨论（社区证据，非官方）：[Can't get UIPasteboard content in the background](https://developer.apple.com/forums/thread/706761)。
 - **写入可行，但必须在用户可感知的上下文中**：`UIPasteboard` 支持写入（`string`/`setItems`），但把“后台静默改写剪贴板”做成默认行为既无文档保证也会引发用户不信任；推荐“用户点按复制 → 前台写入 `UIPasteboard.general`”。
 - **Universal Clipboard 是系统能力，第三方无法复制**：同一 Apple Account 的设备、彼此靠近、蓝牙与 Wi-Fi 开启、Handoff 开启时，复制内容会自动出现在附近设备剪贴板，并“短暂保留，直到被新复制内容替换”。见 [Apple 支持：Use Universal Clipboard](https://support.apple.com/en-us/102430)。
-  - **含义**：Apple 生态内跨设备剪贴板已由系统覆盖（同账号）；derive-sync 的价值在**跨账号、跨平台、历史记录、离线暂存**，不要试图在 iOS 上复制系统级“复制后自动出现在其他 App”的体验。
+  - **含义**：Apple 生态内跨设备剪贴板已由系统覆盖（同账号）；drive-sync 的价值在**跨账号、跨平台、历史记录、离线暂存**，不要试图在 iOS 上复制系统级“复制后自动出现在其他 App”的体验。
 - **`UIPasteboard` 的其他可用能力**：写入时可设置 `expirationDate`/本地化选项（`setItems(_:options:)`），可排除 Handoff（`localOnly`）。见 [UIPasteboard](https://developer.apple.com/documentation/uikit/uipasteboard)。同步内容如需“30 天暂存”之外的本机保留，也应设置合理过期时间。
 
 ### 3.2 APNs：alert push 与 background push
@@ -240,7 +240,7 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 - **`apns-priority` 取值**：`10` 立即发送；`5` 依据设备功耗情况发送；`1` 把功耗置于最高优先级并**阻止唤醒设备**（适合极低优先级）。见 [APNs 请求头](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns)。
 - **后台推送必须用 priority 5**：官方原文明确 “Always use priority `5`. Using priority `10` is an error.”，见 [APNs 推送类型说明](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns)。
 - **载荷上限**：普通远程通知 **4 KB（4096 bytes）**，VoIP 通知 5 KB。见 [生成远程通知](https://developer.apple.com/documentation/usernotifications/generating-a-remote-notification)。
-- **不要在载荷里放敏感明文**：Apple 明确建议敏感数据加密后再放入载荷，可用通知服务扩展（Notification Service Extension）在设备端解密。见 [生成远程通知](https://developer.apple.com/documentation/usernotifications/generating-a-remote-notification)。这与 derive-sync 的 E2EE 设计一致。
+- **不要在载荷里放敏感明文**：Apple 明确建议敏感数据加密后再放入载荷，可用通知服务扩展（Notification Service Extension）在设备端解密。见 [生成远程通知](https://developer.apple.com/documentation/usernotifications/generating-a-remote-notification)。这与 drive-sync 的 E2EE 设计一致。
 - **通知权限**：必须调用 `UNUserNotificationCenter.requestAuthorization` 请求（可带 `.provisional` 进入“安静通知/通知中心历史”模式，用户再决定是否保留）；所有通知类型（含声音/角标）都受授权控制。见 [请求通知权限](https://developer.apple.com/documentation/usernotifications/asking-permission-to-use-notifications)。
 - **通知操作**：用户点按通知按钮时，系统会在后台启动应用并回调 `userNotificationCenter(_:didReceive:withCompletionHandler:)`，可让用户在通知上直接完成“复制/打开”等轻量操作。见 [处理通知与通知相关操作](https://developer.apple.com/documentation/usernotifications/handling-notifications-and-notification-related-actions)。但**后台写剪贴板没有文档保证**，通知按钮应设计为“打开并复制”，而不是承诺后台完成。
 - **时间敏感通知**：可用 `UNNotificationInterruptionLevel.timeSensitive` 提升打扰等级（需相应能力/授权），见 [UNNotificationInterruptionLevel](https://developer.apple.com/documentation/usernotifications/unnotificationinterruptionlevel)。是否启用取决于产品定位，建议默认普通等级。
@@ -268,8 +268,8 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 
 | 层级 | 交互 | 实现 | 备注 |
 |---|---|---|---|
-| L1 主路径 | 打开 derive-sync → 点“粘贴并发送” | `UIPasteControl`（iOS 16+）绑定按钮，无系统弹窗；或普通“粘贴”按钮（会弹一次授权框） | 见 [UIPasteControl](https://developer.apple.com/documentation/uikit/uipastecontrol) |
-| L2 分享扩展 | 在任意 App 选中文本 → 分享 → derive-sync | Share Extension / `UIActivityViewController` | 不需要剪贴板权限，最顺滑，见 [UIActivityViewController](https://developer.apple.com/documentation/uikit/uiactivityviewcontroller) |
+| L1 主路径 | 打开 drive-sync → 点“粘贴并发送” | `UIPasteControl`（iOS 16+）绑定按钮，无系统弹窗；或普通“粘贴”按钮（会弹一次授权框） | 见 [UIPasteControl](https://developer.apple.com/documentation/uikit/uipastecontrol) |
+| L2 分享扩展 | 在任意 App 选中文本 → 分享 → drive-sync | Share Extension / `UIActivityViewController` | 不需要剪贴板权限，最顺滑，见 [UIActivityViewController](https://developer.apple.com/documentation/uikit/uiactivityviewcontroller) |
 | L3 快捷指令 / App Intents | 用户运行“发送当前剪贴板”快捷指令（可从快捷指令 App、Siri、Action Button、背面轻点触发） | 暴露 App Intent；由 Shortcuts 读取剪贴板并调用上传 | 见 [App Intents](https://developer.apple.com/documentation/appintents)、[快捷指令使用手册](https://support.apple.com/guide/shortcuts/welcome/ios) |
 | L4 兜底 | 打开 App 时提示“检测到新复制内容？”（仅当 App 前台且有用户手势时读取） | 前台读取（触发系统提示） | 不做后台探测 |
 
@@ -283,7 +283,7 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 | R4 | 前台/回到 App | 打开即拉取未读；`BGAppRefreshTask` 兜底（系统决定） |
 | 不可实现 | — | 复制后自动出现在其他 App 的剪贴板（仅系统 Universal Clipboard 支持，需同 Apple ID + Handoff） |
 
-**快捷指令的定位**：iOS 的“快捷指令”由系统进程执行，用户运行“复制到剪贴板”动作属于明确的用户意图；derive-sync 可以暴露 `App Intents` 让 Shortcuts 取到“最新一条”再写入剪贴板。它适合高频用户（绑定 Action Button/背面轻点），但**不能作为默认路径**（配置成本高）。
+**快捷指令的定位**：iOS 的“快捷指令”由系统进程执行，用户运行“复制到剪贴板”动作属于明确的用户意图；drive-sync 可以暴露 `App Intents` 让 Shortcuts 取到“最新一条”再写入剪贴板。它适合高频用户（绑定 Action Button/背面轻点），但**不能作为默认路径**（配置成本高）。
 
 ---
 
@@ -352,7 +352,7 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 | 长连接 | 仅前台；切后台 5 秒内关闭 | 避免“后台耗电”口碑问题 |
 | 重试 | 指数退避 + 抖动；后台失败不立即重试，等下一次推送/前台 | 避免触发 FCM/APNs 限流 |
 
-> 这些是 derive-sync 的自定目标，平台没有对应的“标准值”；需要用真机功耗测试（Android Battery Historian / iOS Energy Log）校验。
+> 这些是 drive-sync 的自定目标，平台没有对应的“标准值”；需要用真机功耗测试（Android Battery Historian / iOS Energy Log）校验。
 
 ### 4.4 权限清单
 
@@ -411,7 +411,7 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 
 ### 5.2 GDPR / 《个人信息保护法》简表
 
-| 合规点 | GDPR（参考条款） | 中国《个人信息保护法》（参考条款） | derive-sync 产品要求 |
+| 合规点 | GDPR（参考条款） | 中国《个人信息保护法》（参考条款） | drive-sync 产品要求 |
 |---|---|---|---|
 | 目的限制/最小必要 | Art. 5(1)(b)(c) | 第 6 条：明确、合理目的，与处理目的直接相关，影响最小；限于最小范围 | 只同步用户主动选择的内容；默认不采集剪贴板历史；功能开关默认保守 |
 | 存储期限限制 | Art. 5(1)(e) | 第 19 条：保存期限应为实现处理目的所必要的最短时间 | 默认 24h、最长 30d，硬 TTL + 到期删除；提供“立即删除” |
@@ -482,7 +482,7 @@ AOSP 的 Doze/Standby 是下限，国产 ROM（小米/华为/OPPO/vivo/荣耀等
 **架构建议**：
 
 1. 客户端/服务端都抽象 `PushProvider`：以 `{ provider, token, deviceId }` 三元组持久化；客户端按 `Build.MANUFACTURER`/品牌选择 SDK 注册，服务端按 provider 路由到对应 REST API。FCM token 与厂商 token 不能互换，必须分开存储并做失效清理。
-2. 厂商通道只负责“唤醒”，载荷仍只放信封（与 4.1 主链路一致）；拉取仍走 derive-sync 自建 HTTPS，保持 E2EE。
+2. 厂商通道只负责“唤醒”，载荷仍只放信封（与 4.1 主链路一致）；拉取仍走 drive-sync 自建 HTTPS，保持 E2EE。
 3. 覆盖策略：个人/小团队自建通常只有 1–2 个品牌设备，建议**先做目标用户最常用的 1–2 家 + 前台/WorkManager 兜底**，不要一开始铺满 4 家；产品说明中如实写“实时性取决于系统推送，后台可能延迟”。
 4. 不建议引入第三方统一推送云（个推/极光等）：会引入新的第三方数据处理者，与“自托管、云端只中转”的定位冲突；如未来支持，应作为可选插件并做隐私披露。
 5. 待确认（仍未闭环）：

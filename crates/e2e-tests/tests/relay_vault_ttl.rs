@@ -1,4 +1,4 @@
-//! 中继可选加密暂存（vault）的端到端语义测试。
+﻿//! 中继可选加密暂存（vault）的端到端语义测试。
 //!
 //! 全部通过**真实 WebSocket 客户端 → 进程内中继**验证协议行为，不直接调用中继内部 API。
 //!
@@ -18,11 +18,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use derive_core::identity::Identity;
-use derive_core::util::{blake3_hex, now_ms};
-use derive_core::vault::{VaultMeta, MIN_VAULT_TTL_SECS};
-use derive_core::wire::{ClientToServer, ServerToClient};
-use derive_e2e::harness::{
+use drive_core::identity::Identity;
+use drive_core::util::{blake3_hex, now_ms};
+use drive_core::vault::{VaultMeta, MIN_VAULT_TTL_SECS};
+use drive_core::wire::{ClientToServer, ServerToClient};
+use drive_e2e::harness::{
     relay_config, start_relay, RelayClient, DEFAULT_TIMEOUT, DEFAULT_TOKEN,
 };
 use tempfile::TempDir;
@@ -31,12 +31,12 @@ use tempfile::TempDir;
 // 辅助
 // ---------------------------------------------------------------------------
 
-fn vault_config(dir: &Path) -> derive_relay::RelayConfig {
+fn vault_config(dir: &Path) -> drive_relay::RelayConfig {
     // 每设备/全局限额与清理间隔沿用默认值（暂存目录仍会做启动清理）。
     relay_config(Some(dir.to_path_buf()))
 }
 
-fn reaping_vault_config(dir: &Path) -> derive_relay::RelayConfig {
+fn reaping_vault_config(dir: &Path) -> drive_relay::RelayConfig {
     let mut config = vault_config(dir);
     // 背景清理间隔 1s（协议默认 60s），便于在秒级测试中观察"到期自动删除"。
     config.vault_reap_interval_secs = 1;
@@ -60,7 +60,7 @@ fn meta_for(object_id: &str, plaintext_len: usize) -> VaultMeta {
 
 /// 模拟客户端已做 E2E 加密：中继看到的只是不透明密文。
 fn ciphertext_for(object_id: &str) -> Vec<u8> {
-    let mut bytes = derive_core::util::random_bytes(256);
+    let mut bytes = drive_core::util::random_bytes(256);
     bytes.extend_from_slice(object_id.as_bytes());
     bytes
 }
@@ -150,7 +150,7 @@ async fn get(client: &mut RelayClient, object_id: &str) -> Result<GetResult> {
 
 struct ListResult {
     ok: bool,
-    objects: Vec<derive_core::vault::VaultObjectInfo>,
+    objects: Vec<drive_core::vault::VaultObjectInfo>,
     message: String,
 }
 

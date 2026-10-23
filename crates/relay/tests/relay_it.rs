@@ -1,19 +1,19 @@
-//! derive-relay 集成测试：真实 WebSocket 客户端覆盖认证、presence、配对、转发与暂存。
+﻿//! drive-relay 集成测试：真实 WebSocket 客户端覆盖认证、presence、配对、转发与暂存。
 //!
 //! 每个测试用 `127.0.0.1:0` 启动独立中继实例，互不干扰。
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use derive_core::identity::Identity;
-use derive_core::pairing::{
+use drive_core::identity::Identity;
+use drive_core::pairing::{
     PairJoinPayload, PairingInitiator, PairingResponder, PAIRING_VERSION,
 };
-use derive_core::session::{accept_session_init, complete_session, create_session_init, E2eEnvelope};
-use derive_core::util::{now_ms, random_hex};
-use derive_core::vault::VaultMeta;
-use derive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
-use derive_relay::{start, RelayConfig, RelayHandle};
+use drive_core::session::{accept_session_init, complete_session, create_session_init, E2eEnvelope};
+use drive_core::util::{now_ms, random_hex};
+use drive_core::vault::VaultMeta;
+use drive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
+use drive_relay::{start, RelayConfig, RelayHandle};
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -804,7 +804,7 @@ async fn rate_limit_backpressure_timeout_drops_frame_with_error() {
 /// 默认配置下 64KiB 分块流应全部转发、不触发限流丢帧。
 ///
 /// 默认 2000 帧/s × 64 KiB ≈ 125 MiB/s（容量推导见 lib.rs 单测），本测试验证
-/// "默认路径能持续吸收 64KiB 帧"（release 绝对吞吐由 QA 的 derive-bench 测量）。
+/// "默认路径能持续吸收 64KiB 帧"（release 绝对吞吐由 QA 的 drive-bench 测量）。
 #[tokio::test]
 async fn default_rate_limit_handles_64kib_chunk_stream() {
     let relay = spawn_relay().await;

@@ -1,4 +1,4 @@
-//! 阶段 2 端到端：vault put → 会话建立时经 E2E `vault_share` 共享密钥 → 对端拉取解密。
+﻿//! 阶段 2 端到端：vault put → 会话建立时经 E2E `vault_share` 共享密钥 → 对端拉取解密。
 //!
 //! 覆盖：
 //! 1. A `vault_put`（客户端加密，服务端只存密文；TTL clamp 到 ≥60s）；
@@ -8,12 +8,12 @@
 //! 5. 两个方向都验证：A 自己也能解密取回。
 
 use anyhow::{bail, Result};
-use derive_client::{RuntimeConfig, RuntimeEvent};
-use derive_core::util::now_ms;
-use derive_e2e::client_harness::{
+use drive_client::{RuntimeConfig, RuntimeEvent};
+use drive_core::util::now_ms;
+use drive_e2e::client_harness::{
     file_blake3, pair_nodes, write_random_file, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN,
 };
-use derive_e2e::harness::{relay_config, start_relay};
+use drive_e2e::harness::{relay_config, start_relay};
 use tempfile::TempDir;
 
 use anyhow::Context as _;
@@ -38,7 +38,7 @@ async fn vault_put_share_and_get_decrypt_on_peer() -> Result<()> {
     let src = write_random_file(&files, "vault-secret.bin", VAULT_FILE_SIZE)?;
     let src_hash = file_blake3(&src)?;
     let config_a = RuntimeConfig::new(&dir_a, &url, DEFAULT_TOKEN);
-    let put = derive_client::vault_put(&config_a, &src, 1)
+    let put = drive_client::vault_put(&config_a, &src, 1)
         .await
         .context("vault_put 失败")?;
     assert!(
@@ -73,7 +73,7 @@ async fn vault_put_share_and_get_decrypt_on_peer() -> Result<()> {
     b.shutdown().await?;
 
     let config_b = RuntimeConfig::new(&dir_b, &url, DEFAULT_TOKEN);
-    let restored_b = derive_client::vault_get(
+    let restored_b = drive_client::vault_get(
         &config_b,
         &put.object_id,
         &root.path().join("restored-by-b.bin"),
@@ -88,7 +88,7 @@ async fn vault_put_share_and_get_decrypt_on_peer() -> Result<()> {
     );
 
     // A 自己也能取回（本地保留 object_key）。
-    let restored_a = derive_client::vault_get(
+    let restored_a = drive_client::vault_get(
         &config_a,
         &put.object_id,
         &root.path().join("restored-by-a.bin"),
@@ -98,11 +98,11 @@ async fn vault_put_share_and_get_decrypt_on_peer() -> Result<()> {
     assert_eq!(file_blake3(&restored_a)?, src_hash);
 
     // 4) vault_list 只列本设备对象：A 可见，B 为空（跨设备 get 由 object_id + 共享密钥完成）。
-    let list_a = derive_client::vault_list(&config_a).await?;
+    let list_a = drive_client::vault_list(&config_a).await?;
     if !list_a.iter().any(|object| object.object_id == put.object_id) {
         bail!("A 的 vault_list 应包含刚上传的对象: {list_a:?}");
     }
-    let list_b = derive_client::vault_list(&config_b).await?;
+    let list_b = drive_client::vault_list(&config_b).await?;
     assert!(
         list_b.is_empty(),
         "vault_list 只返回本设备对象，B 不应看到 A 的对象: {list_b:?}"

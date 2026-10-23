@@ -1,18 +1,18 @@
-[package]
-name = "derive-e2e"
+﻿[package]
+name = "drive-e2e"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "derive-sync 端到端测试、延迟基准与演示辅助"
+description = "drive-sync 端到端测试、延迟基准与演示辅助"
 
 [[bin]]
-name = "derive-bench"
+name = "drive-bench"
 path = "src/bin/bench.rs"
 
 [dependencies]
-derive-core = { workspace = true }
-derive-relay = { workspace = true }
-derive-client = { workspace = true }
+drive-core = { workspace = true }
+drive-relay = { workspace = true }
+drive-client = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }

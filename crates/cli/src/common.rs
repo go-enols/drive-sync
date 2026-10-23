@@ -1,9 +1,9 @@
-//! CLI 公共部分：数据目录解析、配置解析、日志、时间格式化。
+﻿//! CLI 公共部分：数据目录解析、配置解析、日志、时间格式化。
 
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
-use derive_client::{default_data_dir, RuntimeConfig, Store};
+use drive_client::{default_data_dir, RuntimeConfig, Store};
 
 /// 全局参数解析后的应用上下文。
 #[derive(Clone, Debug)]
@@ -17,7 +17,7 @@ impl App {
     pub fn new(data_dir: Option<PathBuf>, relay: Option<String>, token: Option<String>) -> Self {
         let data_dir = data_dir
             .or_else(|| {
-                std::env::var_os("DERIVE_SYNC_DATA_DIR")
+                std::env::var_os("DRIVE_SYNC_DATA_DIR")
                     .map(PathBuf::from)
                     .filter(|path| !path.as_os_str().is_empty())
             })
@@ -122,8 +122,8 @@ mod tests {
         // 显式参数优先。
         let app = App::new(Some(PathBuf::from("D:/explicit")), None, None);
         assert_eq!(app.data_dir, PathBuf::from("D:/explicit"));
-        // 不设置参数时使用默认目录（平台目录或 DERIVE_SYNC_DATA_DIR），非空。
-        std::env::remove_var("DERIVE_SYNC_DATA_DIR");
+        // 不设置参数时使用默认目录（平台目录或 DRIVE_SYNC_DATA_DIR），非空。
+        std::env::remove_var("DRIVE_SYNC_DATA_DIR");
         let app = App::new(None, None, None);
         assert!(!app.data_dir.as_os_str().is_empty());
     }

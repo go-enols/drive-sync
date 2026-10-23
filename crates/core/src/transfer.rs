@@ -1,4 +1,4 @@
-//! 文件中转（软件本体/大文件）：分块清单与接收端落盘校验。
+﻿//! 文件中转（软件本体/大文件）：分块清单与接收端落盘校验。
 //!
 //! 数据只在设备间端到端加密传输，中继服务器只转发密文分块，不落盘。
 //! 原型采用"有序流 + 断点偏移"：接收端只接受连续块，中断后从已收字节数续传；
@@ -355,7 +355,7 @@ mod tests {
     fn receiver_writes_and_verifies() {
         let dir = std::env::temp_dir().join(format!("dsync-rx-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();
-        let data = b"derive-sync chunked transfer test payload".repeat(1000);
+        let data = b"drive-sync chunked transfer test payload".repeat(1000);
         let hash = blake3_hex(&data);
         let manifest = TransferManifest::new("out.bin", data.len() as u64, hash, None)
             .with_chunk_size(4096);
@@ -385,7 +385,7 @@ mod tests {
     fn resume_from_disk_keeps_aligned_prefix_and_completes() {
         let dir = std::env::temp_dir().join(format!("dsync-rx3-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();
-        let data = b"derive-sync resume test payload ".repeat(500); // 16000 字节
+        let data = b"drive-sync resume test payload ".repeat(500); // 16000 字节
         let hash = blake3_hex(&data);
         let manifest = TransferManifest::new("resume.bin", data.len() as u64, hash, None)
             .with_chunk_size(4096);

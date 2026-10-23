@@ -1,4 +1,4 @@
-# 部署与运维
+﻿# 部署与运维
 
 > 适用于 v0.1 原型：单台 VPS / NAS，自建中继 + N 台设备。目标是"够用、可维护、内容零存储"。
 
@@ -8,7 +8,7 @@
 Internet
    │ 443/tcp (TLS)
    ▼
-Caddy / Nginx  ──►  127.0.0.1:8787  derive-relay
+Caddy / Nginx  ──►  127.0.0.1:8787  drive-relay
                         ├─ 内存：连接/配对登记/转发
                         └─ /data/vault：仅密文（可选）
 ```
@@ -21,14 +21,14 @@ Caddy / Nginx  ──►  127.0.0.1:8787  derive-relay
 
 ```bash
 # 编译（在构建机）
-cargo build --release -p derive-relay
+cargo build --release -p drive-relay
 
 # 直接运行（开发/本机）
-./derive-relay --bind 127.0.0.1:8787 --token "$(openssl rand -hex 32)"
+./drive-relay --bind 127.0.0.1:8787 --token "$(openssl rand -hex 32)"
 
 # 常用参数（以 --help 为准）
 --bind 127.0.0.1:8787        # 监听地址（生产建议只监听 127.0.0.1，由反代暴露）
---token <token>              # 设备连接令牌（32B 随机；也可 --token-file 或环境变量 DERIVE_RELAY_TOKEN）
+--token <token>              # 设备连接令牌（32B 随机；也可 --token-file 或环境变量 DRIVE_RELAY_TOKEN）
 --vault-dir /data/vault      # 可选云端暂存的密文目录（不配置则禁用暂存）
 --vault-quota-mib 1024       # 每设备暂存配额（MiB，默认 1024）
 --vault-max-object-mib 8     # 单对象上限（MiB，默认 8）
@@ -40,7 +40,7 @@ cargo build --release -p derive-relay
 --log-level info             # 日志级别（RUST_LOG 亦可）
 ```
 
-环境变量：`DERIVE_RELAY_TOKEN` 优先于命令行（避免 token 出现在 `ps` 里）。
+环境变量：`DRIVE_RELAY_TOKEN` 优先于命令行（避免 token 出现在 `ps` 里）。
 
 ## 3. TLS 反向代理
 
@@ -99,18 +99,18 @@ server {
 ## 4. systemd（Linux 服务器）
 
 ```ini
-# /etc/systemd/system/derive-relay.service
+# /etc/systemd/system/drive-relay.service
 [Unit]
-Description=derive-sync relay
+Description=drive-sync relay
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=derive
-Group=derive
-Environment=DERIVE_RELAY_TOKEN=<32B随机hex>
-ExecStart=/usr/local/bin/derive-relay --bind 127.0.0.1:8787 --vault-dir /var/lib/derive/vault
+User=drive
+Group=drive
+Environment=DRIVE_RELAY_TOKEN=<32B随机hex>
+ExecStart=/usr/local/bin/drive-relay --bind 127.0.0.1:8787 --vault-dir /var/lib/drive/vault
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65536
@@ -118,7 +118,7 @@ LimitNOFILE=65536
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/derive
+ReadWritePaths=/var/lib/drive
 PrivateTmp=true
 
 [Install]
@@ -127,7 +127,7 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now derive-relay
+sudo systemctl enable --now drive-relay
 curl -fsS http://127.0.0.1:8787/healthz
 ```
 
@@ -138,47 +138,47 @@ curl -fsS http://127.0.0.1:8787/healthz
 FROM rust:1.96-slim AS builder
 WORKDIR /src
 COPY . .
-RUN cargo build --release -p derive-relay
+RUN cargo build --release -p drive-relay
 
 FROM debian:bookworm-slim
-RUN useradd -r -u 10001 derive && mkdir -p /data && chown derive /data
-COPY --from=builder /src/target/release/derive-relay /usr/local/bin/derive-relay
-USER derive
+RUN useradd -r -u 10001 drive && mkdir -p /data && chown drive /data
+COPY --from=builder /src/target/release/drive-relay /usr/local/bin/drive-relay
+USER drive
 VOLUME ["/data"]
 EXPOSE 8787
-ENTRYPOINT ["derive-relay"]
+ENTRYPOINT ["drive-relay"]
 CMD ["--bind", "0.0.0.0:8787", "--vault-dir", "/data/vault"]
 ```
 
 ```bash
-docker build -f deploy/Dockerfile -t derive-relay:0.1 .
-docker run -d --name derive-relay --restart unless-stopped \
-  -p 127.0.0.1:8787:8787 -v /srv/derive:/data \
-  -e DERIVE_RELAY_TOKEN=<token> derive-relay:0.1
+docker build -f deploy/Dockerfile -t drive-relay:0.1 .
+docker run -d --name drive-relay --restart unless-stopped \
+  -p 127.0.0.1:8787:8787 -v /srv/drive:/data \
+  -e DRIVE_RELAY_TOKEN=<token> drive-relay:0.1
 ```
 
 ## 6. 设备端常驻（桌面）
 
 ### Windows
 
-- 原型：`derive-sync daemon` 前台运行，或注册为启动项：
+- 原型：`drive-sync daemon` 前台运行，或注册为启动项：
   ```powershell
-  $exe = "C:\path\derive-sync.exe"
+  $exe = "C:\path\drive-sync.exe"
   $cmd = "`"$exe`" daemon --relay wss://sync.example.com --token <token>"
-  schtasks /Create /TN "derive-sync" /TR $cmd /SC ONLOGON /RL LIMITED /F
+  schtasks /Create /TN "drive-sync" /TR $cmd /SC ONLOGON /RL LIMITED /F
   ```
 - 生产建议：系统托盘 GUI + 单实例守卫 + 随用户登录启动（不要用 Windows 服务，Session 0 无法访问用户剪贴板）。
 
 ### Linux
 
 ```ini
-# ~/.config/systemd/user/derive-sync.service
+# ~/.config/systemd/user/drive-sync.service
 [Unit]
-Description=derive-sync daemon
+Description=drive-sync daemon
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/local/bin/derive-sync daemon --relay wss://sync.example.com --token <token>
+ExecStart=/usr/local/bin/drive-sync daemon --relay wss://sync.example.com --token <token>
 Restart=on-failure
 RestartSec=3
 
@@ -187,7 +187,7 @@ WantedBy=default.target
 ```
 
 ```bash
-systemctl --user enable --now derive-sync
+systemctl --user enable --now drive-sync
 # 允许用户级服务在未登录时运行（可选）
 sudo loginctl enable-linger $USER
 ```

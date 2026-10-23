@@ -1,14 +1,14 @@
-//! Engine 单元测试：用内存"模拟中继"驱动两个真实 Engine 实例，
+﻿//! Engine 单元测试：用内存"模拟中继"驱动两个真实 Engine 实例，
 //! 覆盖剪切板回环抑制、事件去重、离线 spool 重发、目录合并/持久化、传输断点续传。
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use derive_core::catalog::TargetPlatform;
-use derive_core::clipboard::{ClipboardEvent, ClipboardPayload};
-use derive_core::pairing::{PairRecord, PAIRING_VERSION};
-use derive_core::peer::PeerMessage;
-use derive_core::wire::{ClientToServer, ServerToClient};
+use drive_core::catalog::TargetPlatform;
+use drive_core::clipboard::{ClipboardEvent, ClipboardPayload};
+use drive_core::pairing::{PairRecord, PAIRING_VERSION};
+use drive_core::peer::PeerMessage;
+use drive_core::wire::{ClientToServer, ServerToClient};
 use tempfile::TempDir;
 
 use super::*;
@@ -290,7 +290,7 @@ fn clipboard_sync_and_loopback_suppressed() {
     let mut harness = Harness::new();
     harness.handshake();
 
-    let payload = ClipboardPayload::text("你好，derive-sync!").expect("构造文本载荷");
+    let payload = ClipboardPayload::text("你好，drive-sync!").expect("构造文本载荷");
     let hash = payload.hash.clone();
     let output = harness.a.on_local_clipboard(payload.clone());
     assert!(output.outbound.is_empty(), "去抖窗口内不应发送");
@@ -307,7 +307,7 @@ fn clipboard_sync_and_loopback_suppressed() {
     assert_eq!(settled.applied_b.len(), 1);
     assert_eq!(
         settled.applied_b[0].as_text().expect("文本"),
-        "你好，derive-sync!"
+        "你好，drive-sync!"
     );
     assert!(
         harness.b.recent_applied_contains(&hash),
@@ -651,7 +651,7 @@ impl MultiHarness {
                 .expect("创建身份");
             identities.push(identity);
         }
-        let make_record = |peer: derive_core::identity::PublicIdentity| PairRecord {
+        let make_record = |peer: drive_core::identity::PublicIdentity| PairRecord {
             v: PAIRING_VERSION,
             peer,
             relay_url: "ws://test/ws".into(),
@@ -922,7 +922,7 @@ fn external_peer_removal_revokes_and_cleans_state() {
         .expect("写入 spool");
     assert_eq!(harness.a.spool_count(), 1);
 
-    // 模拟 daemon 运行中用户在另一个进程执行 `derive-sync peers remove`。
+    // 模拟 daemon 运行中用户在另一个进程执行 `drive-sync peers remove`。
     harness
         .a
         .store()

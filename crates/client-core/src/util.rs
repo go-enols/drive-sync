@@ -1,4 +1,4 @@
-//! 客户端通用工具：文件哈希、时间、路径处理。
+﻿//! 客户端通用工具：文件哈希、时间、路径处理。
 
 use std::fs::File;
 use std::io::Read;
@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
-pub use derive_core::util::{b64d, b64e, blake3_hex, now_ms, random_hex};
+pub use drive_core::util::{b64d, b64e, blake3_hex, now_ms, random_hex};
 
 /// 计算文件大小与 BLAKE3 摘要（流式，避免大文件占内存）。
 pub fn hash_file(path: &Path) -> Result<(u64, String)> {

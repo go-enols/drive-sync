@@ -1,15 +1,15 @@
-//! 阶段 2 端到端：非交互配对 → 双向 E2E 会话 → 剪切板同步（去重/回环抑制）。
+﻿//! 阶段 2 端到端：非交互配对 → 双向 E2E 会话 → 剪切板同步（去重/回环抑制）。
 //!
-//! 使用 `derive-client` 的 Runtime（库 API，非 CLI 子进程），经进程内真实中继通信。
+//! 使用 `drive-client` 的 Runtime（库 API，非 CLI 子进程），经进程内真实中继通信。
 
 use std::time::Duration;
 
 use anyhow::Result;
-use derive_client::RuntimeEvent;
-use derive_e2e::client_harness::{
+use drive_client::RuntimeEvent;
+use drive_e2e::client_harness::{
     event_summaries, pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN,
 };
-use derive_e2e::harness::{relay_config, start_relay};
+use drive_e2e::harness::{relay_config, start_relay};
 use tempfile::TempDir;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -40,7 +40,7 @@ async fn pairing_clipboard_sync_dedupe_and_loopback() -> Result<()> {
     b.wait_session(&a_id).await?;
 
     // 3) A 注入剪切板 → B 应用内容（含 ClipboardApplied 事件）。
-    let text_ab = "hello derive-sync e2e";
+    let text_ab = "hello drive-sync e2e";
     a.set_clipboard_text(text_ab).await?;
     let applied = b.recv_clipboard(DEFAULT_EVENT_TIMEOUT).await?;
     assert_eq!(applied.as_text()?, text_ab);

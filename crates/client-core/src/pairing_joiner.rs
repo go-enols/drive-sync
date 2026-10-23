@@ -1,6 +1,6 @@
-//! 配对"加入方"实现（B 端）。
+﻿//! 配对"加入方"实现（B 端）。
 //!
-//! 为什么不用 `derive_core::pairing::PairingResponder`：协议 §4.3 要求 B 先发
+//! 为什么不用 `drive_core::pairing::PairingResponder`：协议 §4.3 要求 B 先发
 //! `pair_join`（中继据此把 A 的 invite 转给 B），而 `PairingResponder::accept`
 //! 需要先拿到 invite 才能构造 join，存在先有鸡还是先有蛋的问题。因此 B 端先生成
 //! 临时 X25519 密钥与 join 载荷，收到 invite 后再按协议 §5 的字节级一致派生规则
@@ -8,12 +8,12 @@
 //! 会与 core 的 `PairingInitiator` 对齐验证）。
 
 use anyhow::{bail, Result};
-use derive_core::crypto::hkdf_expand;
-use derive_core::identity::Identity;
-use derive_core::pairing::{
+use drive_core::crypto::hkdf_expand;
+use drive_core::identity::Identity;
+use drive_core::pairing::{
     PairInvite, PairJoinPayload, PairRecord, PAIRING_VERSION, PAIR_CODE_LEN,
 };
-use derive_core::util::{blake3_hex, canonical_json, now_ms, random_bytes};
+use drive_core::util::{blake3_hex, canonical_json, now_ms, random_bytes};
 use serde::Serialize;
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
 
@@ -120,7 +120,7 @@ struct PairSide {
 }
 
 impl PairSide {
-    fn new(device: &derive_core::identity::PublicIdentity, ephemeral: &[u8; 32]) -> Self {
+    fn new(device: &drive_core::identity::PublicIdentity, ephemeral: &[u8; 32]) -> Self {
         Self {
             device_id: device.device_id.clone(),
             name: device.name.clone(),
@@ -139,9 +139,9 @@ struct PairTranscript {
 }
 
 fn pairing_transcript(
-    a: &derive_core::identity::PublicIdentity,
+    a: &drive_core::identity::PublicIdentity,
     a_ephemeral: &[u8; 32],
-    b: &derive_core::identity::PublicIdentity,
+    b: &drive_core::identity::PublicIdentity,
     b_ephemeral: &[u8; 32],
     code: &str,
 ) -> Result<Vec<u8>> {
@@ -167,8 +167,8 @@ fn pairing_shared(
     let okm = hkdf_expand(
         &dh,
         salt.as_bytes(),
-        b"derive-sync-pairing-key-v1",
-        derive_core::crypto::KEY_LEN,
+        b"drive-sync-pairing-key-v1",
+        drive_core::crypto::KEY_LEN,
     )?;
     let mut key = [0u8; 32];
     key.copy_from_slice(&okm);
@@ -176,7 +176,7 @@ fn pairing_shared(
 }
 
 fn sas_from_key(key: &[u8; 32]) -> String {
-    let okm = hkdf_expand(key, b"derive-sync-sas-v1", b"sas", 4).unwrap_or_else(|_| vec![0u8; 4]);
+    let okm = hkdf_expand(key, b"drive-sync-sas-v1", b"sas", 4).unwrap_or_else(|_| vec![0u8; 4]);
     let n = u32::from_be_bytes([okm[0], okm[1], okm[2], okm[3]]) % 1_000_000;
     format!("{:03} {:03}", n / 1000, n % 1000)
 }
@@ -184,7 +184,7 @@ fn sas_from_key(key: &[u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use derive_core::pairing::{decode_qr, PairingInitiator};
+    use drive_core::pairing::{decode_qr, PairingInitiator};
 
     #[test]
     fn pairing_joiner_matches_core() {

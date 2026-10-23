@@ -1,4 +1,4 @@
-//! `peers` 子命令：查看 / 删除已配对设备。
+﻿//! `peers` 子命令：查看 / 删除已配对设备。
 //!
 //! 配对记录没有 TTL：只有显式 `peers remove`（或对端发送撤销）才会解除。
 //! 本命令是**纯本地文件操作**（不连中继），daemon 运行中也可执行；daemon 会每 2 秒
@@ -8,8 +8,8 @@ use std::io::{IsTerminal, Write};
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
-use derive_client::Store;
-use derive_core::pairing::PairRecord;
+use drive_client::Store;
+use drive_core::pairing::PairRecord;
 
 use crate::common::{format_ms, App};
 
@@ -66,7 +66,7 @@ fn list(store: &Store, json: bool) -> Result<()> {
         return Ok(());
     }
     if peers.is_empty() {
-        println!("尚无已配对设备。运行 `derive-sync pair` 与其他设备配对。");
+        println!("尚无已配对设备。运行 `drive-sync pair` 与其他设备配对。");
         return Ok(());
     }
     println!(
@@ -89,7 +89,7 @@ fn list(store: &Store, json: bool) -> Result<()> {
         println!("      中继: {}", record.relay_url);
     }
     println!();
-    println!("移除配对: derive-sync peers remove <DEVICE_ID|唯一前缀>");
+    println!("移除配对: drive-sync peers remove <DEVICE_ID|唯一前缀>");
     Ok(())
 }
 
@@ -125,7 +125,7 @@ fn resolve_match<'a>(peers: &'a [PairRecord], target: &str) -> Result<Option<&'a
 fn remove(store: &Store, target: &str, yes: bool) -> Result<()> {
     let peers = sorted_peers(store)?;
     let Some(record) = resolve_match(&peers, target)? else {
-        bail!("未找到匹配的配对记录: {target}（可用 `derive-sync peers list` 查看）");
+        bail!("未找到匹配的配对记录: {target}（可用 `drive-sync peers list` 查看）");
     };
     let device_id = record.peer.device_id.clone();
     let name = record.display_name();

@@ -1,15 +1,15 @@
-//! E2E 握手 + 剪切板消息经进程内中继往返的冒烟测试。
+﻿//! E2E 握手 + 剪切板消息经进程内中继往返的冒烟测试。
 //!
-//! 这是 `derive-bench` 的 CI 快速版本：验证两条真实 WebSocket 客户端经 hello 认证、
+//! 这是 `drive-bench` 的 CI 快速版本：验证两条真实 WebSocket 客户端经 hello 认证、
 //! 经中继转发 `session_init`/`session_ack` 完成 E2E 握手，并以加密信封双向收发
 //! 剪切板消息（1KiB）。`bench` 的 1000 次 RTT 不放在 `cargo test` 里（耗时且在慢机器
 //! 上有抖动），这里只做正确性覆盖。
 
 use anyhow::{bail, Context, Result};
-use derive_core::identity::Identity;
-use derive_core::peer::PeerMessage;
-use derive_core::wire::ClientToServer;
-use derive_e2e::harness::{
+use drive_core::identity::Identity;
+use drive_core::peer::PeerMessage;
+use drive_core::wire::ClientToServer;
+use drive_e2e::harness::{
     clipboard_message, establish_pair, pair_records, relay_config, start_relay, text_payload,
     RelayClient, DEFAULT_TOKEN,
 };

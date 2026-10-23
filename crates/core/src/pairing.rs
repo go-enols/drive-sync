@@ -1,4 +1,4 @@
-//! 设备配对：一次性二维码 + 6 位短认证串（SAS），防中继服务器 MITM。
+﻿//! 设备配对：一次性二维码 + 6 位短认证串（SAS），防中继服务器 MITM。
 //!
 //! 流程：
 //! 1. A 生成一次性配对码（8 位数字）与临时 X25519 密钥，把邀请信息经中继挂起（只挂 code_hash）；
@@ -103,7 +103,7 @@ pub fn encode_qr(invite: &PairInvite, code: &str) -> Result<String> {
 pub fn decode_qr(s: &str) -> Result<(PairInvite, String)> {
     let body = s
         .strip_prefix(QR_PREFIX)
-        .ok_or_else(|| CoreError::Invalid("不是 derive-sync 配对二维码".into()))?;
+        .ok_or_else(|| CoreError::Invalid("不是 drive-sync 配对二维码".into()))?;
     let raw = b64url_d(body)?;
     let payload: PairQrPayload = serde_json::from_slice(&raw)?;
     payload.invite.validate()?;
@@ -357,7 +357,7 @@ fn pairing_shared(
     let okm = hkdf_expand(
         &dh,
         salt.as_bytes(),
-        b"derive-sync-pairing-key-v1",
+        b"drive-sync-pairing-key-v1",
         crate::crypto::KEY_LEN,
     )?;
     let mut key = [0u8; 32];
@@ -366,7 +366,7 @@ fn pairing_shared(
 }
 
 fn sas_from_key(key: &[u8; 32]) -> String {
-    let okm = hkdf_expand(key, b"derive-sync-sas-v1", b"sas", 4).unwrap_or_else(|_| vec![0u8; 4]);
+    let okm = hkdf_expand(key, b"drive-sync-sas-v1", b"sas", 4).unwrap_or_else(|_| vec![0u8; 4]);
     let n = u32::from_be_bytes([okm[0], okm[1], okm[2], okm[3]]) % 1_000_000;
     format!("{:03} {:03}", n / 1000, n % 1000)
 }

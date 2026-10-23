@@ -1,22 +1,22 @@
-[package]
-name = "derive-cli"
+﻿[package]
+name = "drive-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "derive-sync 命令行客户端（Windows/Linux 桌面端）"
+description = "drive-sync 命令行客户端（Windows/Linux 桌面端）"
 
 [[bin]]
-name = "derive-sync"
+name = "drive-sync"
 path = "src/main.rs"
 
 [features]
 default = []
 # 连接 wss:// 中继需要启用（会编译 rustls 依赖）。
-tls = ["derive-client/tls"]
+tls = ["drive-client/tls"]
 
 [dependencies]
-derive-core = { workspace = true }
-derive-client = { workspace = true }
+drive-core = { workspace = true }
+drive-client = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 clap = { workspace = true }

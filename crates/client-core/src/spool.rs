@@ -1,4 +1,4 @@
-//! 离线 spool：对端不在线时暂存待发 PeerMessage，上限 100 条 / 16 MiB / TTL 24h
+﻿//! 离线 spool：对端不在线时暂存待发 PeerMessage，上限 100 条 / 16 MiB / TTL 24h
 //! （协议 §7.1、§8.3）。
 //!
 //! 每个待发消息一个 JSON 文件（`spool/{created:016x}-{seq:016x}-{id}.json`），
@@ -7,8 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use derive_core::peer::PeerMessage;
-use derive_core::util::now_ms;
+use drive_core::peer::PeerMessage;
+use drive_core::util::now_ms;
 use serde::{Deserialize, Serialize};
 
 use crate::store::SpoolSettings;
@@ -273,12 +273,12 @@ impl Spool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use derive_core::clipboard::ClipboardPayload;
-    use derive_core::peer::PeerMessage;
+    use drive_core::clipboard::ClipboardPayload;
+    use drive_core::peer::PeerMessage;
     use tempfile::TempDir;
 
     fn clip_msg(text: &str) -> PeerMessage {
-        let event = derive_core::clipboard::ClipboardEvent {
+        let event = drive_core::clipboard::ClipboardEvent {
             v: 1,
             event_id: format!("e-{}", text.len()),
             origin_device: "dev-a".into(),

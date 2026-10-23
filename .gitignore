@@ -1,4 +1,4 @@
-/target
+﻿/target
 **/*.rs.bk
 Cargo.lock.bak
 /data
@@ -6,6 +6,6 @@ Cargo.lock.bak
 *.log
 # 本地运行时产生的设备身份与数据
 /demo-data
-/.derive-sync
+/.drive-sync
 # 项目本地 CARGO_HOME（见 scripts/cargo.ps1）
 /.cargo-home

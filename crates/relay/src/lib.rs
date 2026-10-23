@@ -1,4 +1,4 @@
-//! derive-sync 中继服务器（库）。
+﻿//! drive-sync 中继服务器（库）。
 //!
 //! 实现 `docs/protocol.md` §4 / §5 / §11：
 //! - `GET /ws`：WebSocket；首帧 `hello` 认证（共享 access_token 常量时间比较 + Ed25519 签名 +
@@ -18,7 +18,7 @@
 //! ```text
 //! let mut config = RelayConfig::new("shared-token");
 //! config.bind = "127.0.0.1:0".parse()?;
-//! let handle = derive_relay::start(config).await?;
+//! let handle = drive_relay::start(config).await?;
 //! println!("ws://{}/ws", handle.addr);
 //! handle.shutdown().await;
 //! ```
@@ -39,7 +39,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use axum::{routing::get, Router};
-use derive_core::{DEFAULT_RELAY_PORT, MAX_WIRE_FRAME_BYTES};
+use drive_core::{DEFAULT_RELAY_PORT, MAX_WIRE_FRAME_BYTES};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -254,7 +254,7 @@ pub async fn start(config: RelayConfig) -> Result<RelayHandle> {
     tracing::info!(
         %addr,
         vault = has_vault,
-        "derive-relay 开始监听（ws://{addr}/ws，健康检查 /healthz）"
+        "drive-relay 开始监听（ws://{addr}/ws，健康检查 /healthz）"
     );
 
     Ok(RelayHandle {

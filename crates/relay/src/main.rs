@@ -1,24 +1,24 @@
-//! derive-relay 可执行程序：解析参数、初始化日志、启动中继并等待退出信号。
+﻿//! drive-relay 可执行程序：解析参数、初始化日志、启动中继并等待退出信号。
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use derive_relay::{start, RelayConfig};
+use drive_relay::{start, RelayConfig};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "derive-relay",
+    name = "drive-relay",
     version,
-    about = "derive-sync 中继服务器：只做连接认证/配对路由/密文转发（可选 30 天加密暂存）"
+    about = "drive-sync 中继服务器：只做连接认证/配对路由/密文转发（可选 30 天加密暂存）"
 )]
 struct Args {
     /// 监听地址，例如 0.0.0.0:8787（生产建议前置 Caddy/Nginx 终止 TLS）
     #[arg(long, default_value = "0.0.0.0:8787")]
     bind: String,
 
-    /// 共享访问令牌（也可用 --token-file 或环境变量 DERIVE_RELAY_TOKEN）
+    /// 共享访问令牌（也可用 --token-file 或环境变量 DRIVE_RELAY_TOKEN）
     #[arg(long)]
     token: Option<String>,
 
@@ -84,13 +84,13 @@ fn resolve_token(args: &Args) -> Result<String> {
         }
         return Ok(token.to_string());
     }
-    if let Ok(token) = std::env::var("DERIVE_RELAY_TOKEN") {
+    if let Ok(token) = std::env::var("DRIVE_RELAY_TOKEN") {
         let token = token.trim();
         if !token.is_empty() {
             return Ok(token.to_string());
         }
     }
-    bail!("必须提供共享访问令牌：--token、--token-file 或环境变量 DERIVE_RELAY_TOKEN")
+    bail!("必须提供共享访问令牌：--token、--token-file 或环境变量 DRIVE_RELAY_TOKEN")
 }
 
 fn init_tracing() {
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
 
     let handle = start(config).await?;
     tracing::info!(
-        "derive-relay 已启动：ws://{}/ws（健康检查 http://{}/healthz，暂存：{}）",
+        "drive-relay 已启动：ws://{}/ws（健康检查 http://{}/healthz，暂存：{}）",
         handle.addr,
         handle.addr,
         if args.vault_dir.is_some() {
@@ -147,7 +147,7 @@ async fn main() -> Result<()> {
     wait_for_shutdown_signal().await;
     tracing::info!("收到退出信号，正在关闭中继服务...");
     handle.shutdown().await;
-    tracing::info!("derive-relay 已停止");
+    tracing::info!("drive-relay 已停止");
     Ok(())
 }
 

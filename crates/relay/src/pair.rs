@@ -1,4 +1,4 @@
-//! 配对路由（协议 §4.3 / §5）。
+﻿//! 配对路由（协议 §4.3 / §5）。
 //!
 //! 中继只保存 `code_hash → (announcer, invite, expires_at)` 登记：
 //! - TTL 默认 120s（可配置，且不超过配置上限）；
@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use derive_core::pairing::{PairInvite, PairJoinPayload};
-use derive_core::wire::ServerToClient;
+use drive_core::pairing::{PairInvite, PairJoinPayload};
+use drive_core::wire::ServerToClient;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
@@ -338,8 +338,8 @@ pub(crate) async fn handle_join(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use derive_core::identity::Identity;
-    use derive_core::pairing::{PairInvite, PAIRING_VERSION};
+    use drive_core::identity::Identity;
+    use drive_core::pairing::{PairInvite, PAIRING_VERSION};
 
     fn invite_for(identity: &Identity) -> PairInvite {
         PairInvite {

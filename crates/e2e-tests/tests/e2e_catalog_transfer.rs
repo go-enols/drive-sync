@@ -1,4 +1,4 @@
-//! 阶段 2 端到端：目录快照/增量/墓碑 + have_list + 文件传输 BLAKE3 校验。
+﻿//! 阶段 2 端到端：目录快照/增量/墓碑 + have_list + 文件传输 BLAKE3 校验。
 //!
 //! 流程：
 //! 1. A 先上线并在 B 离线时 `catalog add`（模拟本地已有目录）；
@@ -11,12 +11,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
-use derive_client::{CatalogAddParams, RuntimeEvent};
-use derive_e2e::client_harness::{
+use drive_client::{CatalogAddParams, RuntimeEvent};
+use drive_e2e::client_harness::{
     event_summaries, file_blake3, pair_nodes, write_random_file, ClientNode, DEFAULT_EVENT_TIMEOUT,
     DEFAULT_TOKEN,
 };
-use derive_e2e::harness::{relay_config, start_relay};
+use drive_e2e::harness::{relay_config, start_relay};
 use tempfile::TempDir;
 
 const TRANSFER_SIZE: usize = 2 * 1024 * 1024; // 2 MiB（256KiB 块 → 8 帧，远低于默认限流）

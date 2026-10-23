@@ -1,4 +1,4 @@
-//! E2E 会话：连接级前向保密（每次连接重新协商），身份由配对阶段的 Ed25519 公钥认证。
+﻿//! E2E 会话：连接级前向保密（每次连接重新协商），身份由配对阶段的 Ed25519 公钥认证。
 //!
 //! 握手经中继转发（中继只看到公钥与签名，无法解密后续内容）：
 //! - 发起方 → 对端：`SessionInitMsg`（临时 X25519 公钥 + Ed25519 签名）
@@ -274,7 +274,7 @@ fn derive_session(
     session_id: &str,
 ) -> Result<Session> {
     let salt = blake3::hash(transcript);
-    let okm = hkdf64(shared, salt.as_bytes(), b"derive-sync-session-keys-v1")?;
+    let okm = hkdf64(shared, salt.as_bytes(), b"drive-sync-session-keys-v1")?;
     let mut a = [0u8; 32];
     let mut b = [0u8; 32];
     a.copy_from_slice(&okm[..32]);
@@ -332,13 +332,13 @@ fn envelope_aad(v: u32, session_id: &str, seq: u64, kind: &str, ts_ms: u64) -> S
 }
 
 fn init_sign_input(content: &SessionInitContent) -> Result<Vec<u8>> {
-    let mut buf = b"derive-sync-session-init-v1".to_vec();
+    let mut buf = b"drive-sync-session-init-v1".to_vec();
     buf.extend_from_slice(canonical_json(content)?.as_bytes());
     Ok(buf)
 }
 
 fn ack_sign_input(init: &SessionInitContent, ack: &SessionAckContent) -> Result<Vec<u8>> {
-    let mut buf = b"derive-sync-session-ack-v1".to_vec();
+    let mut buf = b"drive-sync-session-ack-v1".to_vec();
     buf.extend_from_slice(blake3::hash(canonical_json(init)?.as_bytes()).as_bytes());
     buf.extend_from_slice(canonical_json(ack)?.as_bytes());
     Ok(buf)

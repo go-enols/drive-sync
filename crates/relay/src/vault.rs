@@ -1,4 +1,4 @@
-//! 可选加密暂存（协议 §7.4 / §4.5）。
+﻿//! 可选加密暂存（协议 §7.4 / §4.5）。
 //!
 //! 服务端只保存客户端已加密的密文：
 //! - 落盘布局：`<vault_dir>/index.json` + `<vault_dir>/<object_id>.bin`；
@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use derive_core::util::{now_ms, random_hex};
-use derive_core::vault::{effective_ttl_secs, VaultMeta, VaultObjectInfo};
+use drive_core::util::{now_ms, random_hex};
+use drive_core::vault::{effective_ttl_secs, VaultMeta, VaultObjectInfo};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -519,7 +519,7 @@ async fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use derive_core::vault::{MAX_VAULT_TTL_SECS, MIN_VAULT_TTL_SECS};
+    use drive_core::vault::{MAX_VAULT_TTL_SECS, MIN_VAULT_TTL_SECS};
 
     fn limits() -> VaultLimits {
         VaultLimits {

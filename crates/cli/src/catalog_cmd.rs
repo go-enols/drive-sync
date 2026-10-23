@@ -1,13 +1,13 @@
-//! `catalog` 子命令：add / list / remove / fetch（一次性连接下载）。
+﻿//! `catalog` 子命令：add / list / remove / fetch（一次性连接下载）。
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
-use derive_client::{CatalogAddParams, LocalIndexEntry};
-use derive_core::catalog::{CatalogEntry, TargetPlatform};
-use derive_core::util::now_ms;
+use drive_client::{CatalogAddParams, LocalIndexEntry};
+use drive_core::catalog::{CatalogEntry, TargetPlatform};
+use drive_core::util::now_ms;
 
 use crate::common::{format_ms, human_bytes, App};
 
@@ -82,7 +82,7 @@ fn add(
     let node = identity.device_id();
     let path = std::path::absolute(&path).unwrap_or(path);
     let (size, content_hash) =
-        derive_client::util::hash_file(&path).with_context(|| {
+        drive_client::util::hash_file(&path).with_context(|| {
             format!("读取/计算文件哈希失败: {}", path.display())
         })?;
     let platform = match platform {
@@ -91,7 +91,7 @@ fn add(
                 "未知平台: {text}（可用 windows/linux/android/ios/macos/any）"
             )
         })?,
-        None => derive_client::engine::default_platform(),
+        None => drive_client::engine::default_platform(),
     };
     let name = name.unwrap_or_else(|| {
         path.file_stem()
@@ -164,7 +164,7 @@ fn list(app: &App) -> Result<()> {
     let (catalog, revision) = store.load_catalog()?;
     let index = store.load_local_index()?;
     if catalog.visible_count() == 0 {
-        println!("目录为空。使用 `derive-sync catalog add --path <文件>` 添加条目。");
+        println!("目录为空。使用 `drive-sync catalog add --path <文件>` 添加条目。");
         return Ok(());
     }
     println!("目录条目（revision {}）:", revision);
@@ -217,7 +217,7 @@ async fn fetch(app: &App, entry_id: &str, out: Option<PathBuf>) -> Result<()> {
     let store = app.store()?;
     let config = app.runtime_config(&store)?;
     println!("正在连接中继并等待持有该条目的设备响应…");
-    let path = derive_client::ops::catalog_fetch(
+    let path = drive_client::ops::catalog_fetch(
         &config,
         entry_id,
         out,

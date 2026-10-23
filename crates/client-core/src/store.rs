@@ -1,4 +1,4 @@
-//! 本地数据目录持久化。
+﻿//! 本地数据目录持久化。
 //!
 //! 目录布局（见 docs/protocol.md §8.1）：
 //!
@@ -25,10 +25,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use anyhow::{anyhow, bail, Context, Result};
-use derive_core::catalog::Catalog;
-use derive_core::identity::{Identity, IdentityFile, PublicIdentity};
-use derive_core::pairing::PairRecord;
-use derive_core::vault::VaultMeta;
+use drive_core::catalog::Catalog;
+use drive_core::identity::{Identity, IdentityFile, PublicIdentity};
+use drive_core::pairing::PairRecord;
+use drive_core::vault::VaultMeta;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -281,7 +281,7 @@ impl Store {
         let path = self.identity_path();
         if !path.exists() {
             bail!(
-                "尚未初始化设备身份（{} 不存在）。请先运行 `derive-sync init --name <设备名>`",
+                "尚未初始化设备身份（{} 不存在）。请先运行 `drive-sync init --name <设备名>`",
                 path.display()
             );
         }
@@ -523,11 +523,11 @@ impl Store {
 }
 
 /// 平台默认数据目录：
-/// - Windows：`%APPDATA%\derive-sync`
-/// - Linux：`$XDG_DATA_HOME/derive-sync` 或 `~/.local/share/derive-sync`
-/// - macOS：`~/Library/Application Support/derive-sync`
+/// - Windows：`%APPDATA%\drive-sync`
+/// - Linux：`$XDG_DATA_HOME/drive-sync` 或 `~/.local/share/drive-sync`
+/// - macOS：`~/Library/Application Support/drive-sync`
 pub fn default_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("DERIVE_SYNC_DATA_DIR") {
+    if let Ok(dir) = std::env::var("DRIVE_SYNC_DATA_DIR") {
         if !dir.trim().is_empty() {
             return PathBuf::from(dir);
         }
@@ -536,10 +536,10 @@ pub fn default_data_dir() -> PathBuf {
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
             if !appdata.trim().is_empty() {
-                return PathBuf::from(appdata).join(derive_core::APP_NAME);
+                return PathBuf::from(appdata).join(drive_core::APP_NAME);
             }
         }
-        PathBuf::from(".").join(".derive-sync")
+        PathBuf::from(".").join(".drive-sync")
     }
     #[cfg(target_os = "macos")]
     {
@@ -547,15 +547,15 @@ pub fn default_data_dir() -> PathBuf {
             return PathBuf::from(home)
                 .join("Library")
                 .join("Application Support")
-                .join(derive_core::APP_NAME);
+                .join(drive_core::APP_NAME);
         }
-        PathBuf::from(".").join(".derive-sync")
+        PathBuf::from(".").join(".drive-sync")
     }
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
             if !xdg.trim().is_empty() {
-                return PathBuf::from(xdg).join(derive_core::APP_NAME);
+                return PathBuf::from(xdg).join(drive_core::APP_NAME);
             }
         }
         if let Ok(home) = std::env::var("HOME") {
@@ -563,10 +563,10 @@ pub fn default_data_dir() -> PathBuf {
                 return PathBuf::from(home)
                     .join(".local")
                     .join("share")
-                    .join(derive_core::APP_NAME);
+                    .join(drive_core::APP_NAME);
             }
         }
-        PathBuf::from(".derive-sync")
+        PathBuf::from(".drive-sync")
     }
 }
 
@@ -583,8 +583,8 @@ pub fn short_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use derive_core::identity::Identity;
-    use derive_core::pairing::{PairRecord, PAIRING_VERSION};
+    use drive_core::identity::Identity;
+    use drive_core::pairing::{PairRecord, PAIRING_VERSION};
     use tempfile::TempDir;
 
     fn record(identity: &Identity, label: &str) -> PairRecord {

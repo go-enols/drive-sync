@@ -1,6 +1,6 @@
-//! 文件接收端：`.part` 临时文件、按块顺序写入、BLAKE3 校验、原子重命名、断点续传。
+﻿//! 文件接收端：`.part` 临时文件、按块顺序写入、BLAKE3 校验、原子重命名、断点续传。
 //!
-//! 与 `derive_core::transfer::TransferReceiver` 的差异：本实现可真正从已有 `.part`
+//! 与 `drive_core::transfer::TransferReceiver` 的差异：本实现可真正从已有 `.part`
 //! 恢复（读回前缀重建哈希、丢弃未对齐尾部），这是协议 §7.3 "重连续传" 需要的。
 //! 块按 `offset == received` 顺序追加；发送端在 `transfer_accept.from_offset` 之后
 //! 也必须从对齐到块边界的偏移继续。
@@ -10,7 +10,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use derive_core::transfer::TransferManifest;
+use drive_core::transfer::TransferManifest;
 
 /// 接收中的文件（`.part` 在未完成前保留，进程崩溃后可续传）。
 pub struct PartialReceiver {
@@ -189,7 +189,7 @@ pub fn align_up(offset: u64, chunk_size: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use derive_core::util::blake3_hex;
+    use drive_core::util::blake3_hex;
     use tempfile::TempDir;
 
     fn manifest(data: &[u8], chunk: u32) -> TransferManifest {
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn receive_and_verify() {
         let tmp = TempDir::new().unwrap();
-        let data = b"derive-sync-partial-receiver-test".repeat(500);
+        let data = b"drive-sync-partial-receiver-test".repeat(500);
         let m = manifest(&data, 4096);
         let mut rx = PartialReceiver::open(&m, tmp.path()).unwrap();
         assert_eq!(rx.received_bytes(), 0);

@@ -1,4 +1,4 @@
-//! 对称加密原语：XChaCha20-Poly1305 AEAD 与 HKDF-SHA256。
+﻿//! 对称加密原语：XChaCha20-Poly1305 AEAD 与 HKDF-SHA256。
 
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
@@ -83,8 +83,8 @@ mod tests {
     #[test]
     fn seal_open_roundtrip() {
         let key = random_key();
-        let sealed = seal(&key, b"aad", b"hello derive-sync").unwrap();
-        assert_eq!(open(&key, b"aad", &sealed).unwrap(), b"hello derive-sync");
+        let sealed = seal(&key, b"aad", b"hello drive-sync").unwrap();
+        assert_eq!(open(&key, b"aad", &sealed).unwrap(), b"hello drive-sync");
         assert!(open(&key, b"other", &sealed).is_err());
         let mut bad = sealed.clone();
         *bad.last_mut().unwrap() ^= 1;

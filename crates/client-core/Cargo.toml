@@ -1,9 +1,9 @@
-[package]
-name = "derive-client"
+﻿[package]
+name = "drive-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "derive-sync 客户端同步引擎：会话路由、剪切板去重、目录同步、文件中转"
+description = "drive-sync 客户端同步引擎：会话路由、剪切板去重、目录同步、文件中转"
 
 [features]
 default = []
@@ -12,7 +12,7 @@ default = []
 tls = ["tokio-tungstenite/rustls-tls-webpki-roots"]
 
 [dependencies]
-derive-core = { workspace = true }
+drive-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

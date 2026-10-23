@@ -1,4 +1,4 @@
-//! 剪切板后端：统一 trait + 系统剪切板（arboard，文本/PNG 图片）+ file 模式。
+﻿//! 剪切板后端：统一 trait + 系统剪切板（arboard，文本/PNG 图片）+ file 模式。
 //!
 //! - **auto**：优先同步文本；没有文本（或文本未变）时尝试图片；
 //! - **text**：只同步文本；
@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use derive_core::clipboard::{ClipboardKind, ClipboardPayload};
+use drive_core::clipboard::{ClipboardKind, ClipboardPayload};
 
 /// 剪切板读取/写入后端。
 pub trait ClipboardBackend: Send {
@@ -51,7 +51,7 @@ impl ClipboardMode {
             other if other.starts_with("file:") => {
                 let path = PathBuf::from(&other["file:".len()..]);
                 if path.as_os_str().is_empty() {
-                    bail!("file: 模式需要文件路径，例如 --clipboard file:C:\\temp\\derive-sync-clip.txt");
+                    bail!("file: 模式需要文件路径，例如 --clipboard file:C:\\temp\\drive-sync-clip.txt");
                 }
                 Ok(Self::File(path))
             }

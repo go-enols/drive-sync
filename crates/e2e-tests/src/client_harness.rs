@@ -1,4 +1,4 @@
-//! `derive_client::Runtime` 节点封装（阶段 2 双/多设备端到端测试用）。
+﻿//! `drive_client::Runtime` 节点封装（阶段 2 双/多设备端到端测试用）。
 //!
 //! 目标：让测试用**库 API**（而不是 CLI 子进程）驱动真实客户端运行时：
 //! - [`ClientNode::start`]：打开数据目录 + 异步 Runtime（自动重连、会话、心跳）；
@@ -16,10 +16,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use derive_client::{PairOutcome, Runtime, RuntimeConfig, RuntimeEvent, RuntimeHandle};
-use derive_core::catalog::{Catalog, CatalogEntry};
-use derive_core::clipboard::ClipboardPayload;
-use derive_core::util::{blake3_hex, random_bytes};
+use drive_client::{PairOutcome, Runtime, RuntimeConfig, RuntimeEvent, RuntimeHandle};
+use drive_core::catalog::{Catalog, CatalogEntry};
+use drive_core::clipboard::ClipboardPayload;
+use drive_core::util::{blake3_hex, random_bytes};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -110,7 +110,7 @@ impl ClientNode {
         self.handle.clone()
     }
 
-    pub fn store(&self) -> &std::sync::Arc<derive_client::Store> {
+    pub fn store(&self) -> &std::sync::Arc<drive_client::Store> {
         self.handle.store()
     }
 
@@ -282,7 +282,7 @@ pub async fn pair_nodes(
     let config_a = RuntimeConfig::new(dir_a, relay_url, access_token).with_device_name(name_a);
     let config_b = RuntimeConfig::new(dir_b, relay_url, access_token).with_device_name(name_b);
     let (outcome_a, outcome_b) =
-        derive_client::pair_pairwise(&config_a, &config_b, Duration::from_secs(30))
+        drive_client::pair_pairwise(&config_a, &config_b, Duration::from_secs(30))
             .await
             .context("非交互配对失败")?;
     if outcome_a.record.pairing_fingerprint != outcome_b.record.pairing_fingerprint {

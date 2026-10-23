@@ -1,4 +1,4 @@
-//! 单条 WebSocket 连接：hello 认证、welcome/presence、消息路由、限速与空闲超时。
+﻿//! 单条 WebSocket 连接：hello 认证、welcome/presence、消息路由、限速与空闲超时。
 //!
 //! 每条连接 = 一个读任务（本模块 `run_connection`）+ 一个写任务（writer）。
 //! 业务消息只做转发：`session_init` / `session_ack` / `relay`；中继不解析、不记录 ciphertext。
@@ -10,9 +10,9 @@ use std::time::Duration;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
-use derive_core::util::{now_ms, random_hex};
-use derive_core::vault::VaultMeta;
-use derive_core::wire::{ClientToServer, ServerToClient, WIRE_VERSION};
+use drive_core::util::{now_ms, random_hex};
+use drive_core::vault::VaultMeta;
+use drive_core::wire::{ClientToServer, ServerToClient, WIRE_VERSION};
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, watch};

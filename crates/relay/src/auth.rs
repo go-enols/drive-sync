@@ -1,16 +1,16 @@
-//! Hello 认证（协议 §4.1）。
+﻿//! Hello 认证（协议 §4.1）。
 //!
 //! 校验顺序（任一失败即关闭连接）：
 //! 1. 协议版本 `v == PROTOCOL_VERSION`；
 //! 2. `access_token` 常量时间比较；
 //! 3. `PublicIdentity::is_consistent()`（device_id 必须由 ed_public 派生）；
-//! 4. Ed25519 签名：`b"derive-sync-hello-v1" || nonce || device_id`。
+//! 4. Ed25519 签名：`b"drive-sync-hello-v1" || nonce || device_id`。
 //!
 //! 认证材料（token / nonce / 签名）绝不写入日志。
 
-use derive_core::identity::PublicIdentity;
-use derive_core::util::ct_eq;
-use derive_core::wire::{hello_sign_input, ClientToServer, WIRE_VERSION};
+use drive_core::identity::PublicIdentity;
+use drive_core::util::ct_eq;
+use drive_core::wire::{hello_sign_input, ClientToServer, WIRE_VERSION};
 
 use crate::RelayConfig;
 
@@ -80,7 +80,7 @@ pub(crate) fn authenticate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use derive_core::identity::Identity;
+    use drive_core::identity::Identity;
 
     fn config() -> RelayConfig {
         RelayConfig::new("test-token")

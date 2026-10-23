@@ -1,0 +1,22 @@
+﻿[Unit]
+Description=drive-sync relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=drive
+Group=drive
+Environment=DRIVE_RELAY_TOKEN=CHANGE_ME_32B_RANDOM_HEX
+ExecStart=/usr/local/bin/drive-relay --bind 127.0.0.1:8787 --vault-dir /var/lib/drive/vault
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/drive
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

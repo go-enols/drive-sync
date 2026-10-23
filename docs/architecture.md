@@ -1,4 +1,4 @@
-# derive-sync 架构方案
+﻿# drive-sync 架构方案
 
 > 版本：v0.1（2026-10）｜适用场景：个人 / 小团队自建，多设备（Windows、Linux、Android、iOS、macOS）互联
 > 关联文档：[协议规范](protocol.md) ｜ [桌面平台调研](platform-desktop.md) ｜ [移动端平台调研](platform-mobile.md)
@@ -198,7 +198,7 @@ B: 拿到 key → vault_get → 解密 → 校验 BLAKE3
 
 ### 6.3 性能测量方法
 
-- `derive-bench`：进程内启动中继 + 两台虚拟设备，测 E2E 加密转发 RTT 的 p50/p95/p99、吞吐（不同 payload 大小）。
+- `drive-bench`：进程内启动中继 + 两台虚拟设备，测 E2E 加密转发 RTT 的 p50/p95/p99、吞吐（不同 payload 大小）。
 - 真实双机 LAN/WAN 测试：记录复制→对端可用时间、大文件吞吐、CPU/内存/电量。
 - 指标埋点（生产）：同步成功率、p95 延迟、重连次数、spool 深度、中继带宽。
 
@@ -227,7 +227,7 @@ B: 拿到 key → vault_get → 解密 → 校验 BLAKE3
 | 重放/乱序 | E2E 方向序号严格递增；event_id LRU |
 | 伪造设备注册 | Hello Ed25519 签名 + device_id 一致性校验 + access token |
 | 配对码暴力破解 | 8 位数字 + 120s TTL + 失败即销毁 + 5 次/分钟限流 |
-| 设备丢失/主动解除 | 在任一设备执行 `derive-sync peers remove <device_id>`：删除本地 PairRecord，daemon ≤2s 内销毁会话并尽力发送 `PairRevoked`；对端收到后自动删除记录。`identity.json` 删除/重置等同全部配对失效。v1.0 支持远程撤销+密钥轮换 |
+| 设备丢失/主动解除 | 在任一设备执行 `drive-sync peers remove <device_id>`：删除本地 PairRecord，daemon ≤2s 内销毁会话并尽力发送 `PairRevoked`；对端收到后自动删除记录。`identity.json` 删除/重置等同全部配对失效。v1.0 支持远程撤销+密钥轮换 |
 | 云端暂存泄露 | 客户端随机密钥加密，服务端无密钥；TTL ≤30d |
 | 剪切板敏感内容外泄 | OS 层排除密码管理器；按类型/设备开关；一键暂停；不落日志 |
 | 目录元数据泄露 | 目录内容 E2E 加密；中继不可见；暂存 meta 生产可再加密 |
@@ -304,7 +304,7 @@ incoming/        .part 接收中文件 + 已收文件
 ```
 VPS (1C1G 起) 或 NAS
   ├─ Caddy/Nginx：TLS 证书、wss 反向代理 → 127.0.0.1:8787
-  ├─ derive-relay（单二进制）：--bind 127.0.0.1:8787 --access-token <强随机>
+  ├─ drive-relay（单二进制）：--bind 127.0.0.1:8787 --access-token <强随机>
   ├─ vault 目录：仅密文，磁盘配额/备份策略按需
   └─ /healthz 探活 + 日志（脱敏）
 ```
@@ -318,7 +318,7 @@ VPS (1C1G 起) 或 NAS
 - 中继不备份内容（无内容可备份）；只备份 access_token/配置。
 - 监控：在线设备数、连接数、转发帧数/字节、暂存对象数/字节、过期删除数、错误率。
 - 升级：中继与客户端协议版本兼容窗口 ≥ 1 个大版本；破坏性变更升 `PROTOCOL_VERSION`。
-- Docker：`docker run -v /data/derive:/data -e DSYNC_TOKEN=... derive-relay --vault-dir /data/vault`
+- Docker：`docker run -v /data/drive:/data -e DRIVE_RELAY_TOKEN=... drive-relay --vault-dir /data/vault`
 
 ## 13. 路线图
 

@@ -1,20 +1,20 @@
-[package]
-name = "derive-relay"
+﻿[package]
+name = "drive-relay"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "derive-sync 中继服务器：不持久化转发内容，只负责连接认证、配对路由、E2E 密文转发与可选 30 天加密暂存"
+description = "drive-sync 中继服务器：不持久化转发内容，只负责连接认证、配对路由、E2E 密文转发与可选 30 天加密暂存"
 
 [lib]
-name = "derive_relay"
+name = "drive_relay"
 path = "src/lib.rs"
 
 [[bin]]
-name = "derive-relay"
+name = "drive-relay"
 path = "src/main.rs"
 
 [dependencies]
-derive-core = { workspace = true }
+drive-core = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -30,4 +30,4 @@ tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 tempfile = "3"
-derive-core = { workspace = true }
+drive-core = { workspace = true }

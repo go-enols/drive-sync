@@ -1,4 +1,4 @@
-//! 异步运行时：连接循环（自动重连退避 1s→30s ±20% 抖动）+ Engine + WS 心跳（30s）。
+﻿//! 异步运行时：连接循环（自动重连退避 1s→30s ±20% 抖动）+ Engine + WS 心跳（30s）。
 //!
 //! 对外提供 [`Runtime`]（消费式 `run()`）与可克隆的 [`RuntimeHandle`]（注入本机剪切板变化、
 //! 目录操作、主动拉取、优雅关闭）。CLI daemon 与 e2e 测试都复用它。
@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use derive_core::clipboard::ClipboardPayload;
-use derive_core::identity::Identity;
+use drive_core::clipboard::ClipboardPayload;
+use drive_core::identity::Identity;
 use tokio::sync::{mpsc, watch};
 
 use crate::engine::{
@@ -620,7 +620,7 @@ pub fn load_identity(store: &Store, device_name: Option<&str>) -> Result<Identit
     match device_name {
         Some(name) if !name.trim().is_empty() => Ok(store.load_or_create_identity(name)?.0),
         _ => bail!(
-            "尚未初始化设备身份（{}）。请先运行 `derive-sync init --name <设备名>`",
+            "尚未初始化设备身份（{}）。请先运行 `drive-sync init --name <设备名>`",
             store.identity_path().display()
         ),
     }

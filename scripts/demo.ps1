@@ -1,4 +1,4 @@
-# derive-sync Windows one-click demo (ASCII-only for Windows PowerShell 5.1).
+﻿# drive-sync Windows one-click demo (ASCII-only for Windows PowerShell 5.1).
 #
 # Flow (all CLI processes run SERIALLY; a relay only allows one connection per device,
 # so a daemon must be stopped before running one-shot commands like catalog add/fetch
@@ -27,11 +27,11 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
-$sync = Join-Path $repo "target/release/derive-sync.exe"
-$relayExe = Join-Path $repo "target/release/derive-relay.exe"
+$sync = Join-Path $repo "target/release/drive-sync.exe"
+$relayExe = Join-Path $repo "target/release/drive-relay.exe"
 foreach ($exe in @($sync, $relayExe)) {
     if (-not (Test-Path $exe)) {
-        throw "missing binary: $exe ; run: cargo build --release -p derive-cli -p derive-relay"
+        throw "missing binary: $exe ; run: cargo build --release -p drive-cli -p drive-relay"
     }
 }
 $work = Join-Path $repo $WorkRoot

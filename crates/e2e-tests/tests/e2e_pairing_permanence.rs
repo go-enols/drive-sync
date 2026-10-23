@@ -1,4 +1,4 @@
-//! 配对永久有效 + 重复配对幂等（task-7 中**不依赖 task-6** 的部分）。
+﻿//! 配对永久有效 + 重复配对幂等（task-7 中**不依赖 task-6** 的部分）。
 //!
 //! 需求：已配对设备除非任一方显式删除 `PairRecord`，否则不论多久、重启/换网络都无需重新配对。
 //! 本文件验证：
@@ -15,14 +15,14 @@
 
 use std::path::Path;
 use anyhow::{bail, Context, Result};
-use derive_client::{CatalogAddParams, RuntimeEvent, Store};
-use derive_core::identity::Identity;
-use derive_core::pairing::{PairRecord, PAIRING_VERSION};
-use derive_core::util::now_ms;
-use derive_e2e::client_harness::{
+use drive_client::{CatalogAddParams, RuntimeEvent, Store};
+use drive_core::identity::Identity;
+use drive_core::pairing::{PairRecord, PAIRING_VERSION};
+use drive_core::util::now_ms;
+use drive_e2e::client_harness::{
     pair_nodes, write_random_file, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN,
 };
-use derive_e2e::harness::{relay_config, restart_relay_on, start_relay};
+use drive_e2e::harness::{relay_config, restart_relay_on, start_relay};
 use tempfile::TempDir;
 
 /// 10 年（毫秒）。

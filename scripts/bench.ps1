@@ -1,4 +1,4 @@
-# Run derive-sync end-to-end tests + latency/throughput benchmark (release build).
+﻿# Run drive-sync end-to-end tests + latency/throughput benchmark (release build).
 #
 # Usage (works with Windows PowerShell 5.1 and PowerShell 7+):
 #   powershell -NoProfile -File scripts/bench.ps1
@@ -14,7 +14,7 @@
 param(
     [switch]$SkipTests,
     [switch]$Quick,
-    [string]$JsonOut = "target/bench/derive-bench.json"
+    [string]$JsonOut = "target/bench/drive-bench.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,19 +27,19 @@ if (-not (Test-Path $env:CARGO_HOME)) {
 Push-Location $root
 try {
     if (-not $SkipTests) {
-        Write-Host "==> cargo test -p derive-e2e"
-        & cargo test -p derive-e2e --offline
-        if ($LASTEXITCODE -ne 0) { throw "cargo test -p derive-e2e failed (exit=$LASTEXITCODE)" }
+        Write-Host "==> cargo test -p drive-e2e"
+        & cargo test -p drive-e2e --offline
+        if ($LASTEXITCODE -ne 0) { throw "cargo test -p drive-e2e failed (exit=$LASTEXITCODE)" }
     }
 
     $benchArgs = @(
-        "run", "--release", "-p", "derive-e2e", "--bin", "derive-bench",
+        "run", "--release", "-p", "drive-e2e", "--bin", "drive-bench",
         "--offline", "--", "--json-out", $JsonOut
     )
     if ($Quick) { $benchArgs += "--quick" }
-    Write-Host "==> derive-bench (release)"
+    Write-Host "==> drive-bench (release)"
     & cargo @benchArgs
-    if ($LASTEXITCODE -ne 0) { throw "derive-bench failed (exit=$LASTEXITCODE)" }
+    if ($LASTEXITCODE -ne 0) { throw "drive-bench failed (exit=$LASTEXITCODE)" }
 
     $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $JsonOut))
     Write-Host ""

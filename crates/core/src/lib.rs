@@ -1,4 +1,4 @@
-//! derive-sync 协议核心库。
+﻿//! drive-sync 协议核心库。
 //!
 //! 设计要点：
 //! - **中继不可信**：所有内容端到端加密，中继只做信令与密文转发；可选暂存也只保存密文。
@@ -29,7 +29,7 @@ pub use error::{CoreError, Result};
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// 应用名（用于 data 目录、日志等）。
-pub const APP_NAME: &str = "derive-sync";
+pub const APP_NAME: &str = "drive-sync";
 
 /// 单条 WebSocket 文本帧上限（中继/客户端配置一致；块传输每块约 64 KiB）。
 pub const MAX_WIRE_FRAME_BYTES: usize = 8 * 1024 * 1024;

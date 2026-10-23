@@ -1,12 +1,12 @@
-//! `pair` 子命令：发起配对（默认）或加入配对（`--qr` / `--code`）。
+﻿//! `pair` 子命令：发起配对（默认）或加入配对（`--qr` / `--code`）。
 //!
 //! 双方必须比对 6 位 SAS 后才会保存 PairRecord；`--yes` 用于脚本/测试自动确认。
 
 use std::io::{self, Write};
 
 use anyhow::{bail, Result};
-use derive_client::{pair_initiate, pair_respond, PairOutcome, PairUi, RuntimeConfig};
-use derive_core::identity::PublicIdentity;
+use drive_client::{pair_initiate, pair_respond, PairOutcome, PairUi, RuntimeConfig};
+use drive_core::identity::PublicIdentity;
 
 struct CliPairUi {
     yes: bool,
@@ -21,7 +21,7 @@ impl PairUi for CliPairUi {
     }
 
     fn on_code(&self, code: &str) {
-        println!("配对码: {code}  （在另一台设备上执行 `derive-sync pair --code {code}`）");
+        println!("配对码: {code}  （在另一台设备上执行 `drive-sync pair --code {code}`）");
     }
 
     fn on_peer(&self, peer: &PublicIdentity) {

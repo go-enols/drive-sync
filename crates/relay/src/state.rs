@@ -1,4 +1,4 @@
-//! 中继共享状态：在线设备表、配对登记表、失败限流、可选暂存。
+﻿//! 中继共享状态：在线设备表、配对登记表、失败限流、可选暂存。
 //!
 //! 并发模型：每个连接一个读任务（+ 一个写任务），共享状态用 `Arc<RelayState>`，
 //! 在线表用 `RwLock`、配对表用 `Mutex`，跨连接投递用每条连接的有界 `mpsc`。
@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use derive_core::wire::ServerToClient;
+use drive_core::wire::ServerToClient;
 use tokio::sync::{mpsc, watch, Mutex, RwLock};
 
 use crate::pair::PairRegistry;

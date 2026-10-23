@@ -1,4 +1,4 @@
-//! 客户端 ↔ 中继服务器的在线协议（JSON over WebSocket）。
+﻿//! 客户端 ↔ 中继服务器的在线协议（JSON over WebSocket）。
 //!
 //! 中继只做三件事：设备连接注册、配对信息转发、E2E 密文转发（以及可选的加密暂存）。
 //! 它不持有任何明文内容，也不持久化剪切板/目录/文件数据。
@@ -119,9 +119,9 @@ pub enum ServerToClient {
     Error { code: String, message: String },
 }
 
-/// Hello 签名输入：`b"derive-sync-hello-v1" || nonce || device_id`。
+/// Hello 签名输入：`b"drive-sync-hello-v1" || nonce || device_id`。
 pub fn hello_sign_input(nonce: &str, device_id: &str) -> Vec<u8> {
-    let mut buf = b"derive-sync-hello-v1".to_vec();
+    let mut buf = b"drive-sync-hello-v1".to_vec();
     buf.extend_from_slice(nonce.as_bytes());
     buf.extend_from_slice(device_id.as_bytes());
     buf

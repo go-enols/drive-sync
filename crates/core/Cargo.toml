@@ -1,9 +1,9 @@
-[package]
-name = "derive-core"
+﻿[package]
+name = "drive-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "derive-sync 协议核心：身份、配对、E2E 加密、剪切板、软件目录 CRDT"
+description = "drive-sync 协议核心：身份、配对、E2E 加密、剪切板、软件目录 CRDT"
 
 [dependencies]
 serde = { workspace = true }

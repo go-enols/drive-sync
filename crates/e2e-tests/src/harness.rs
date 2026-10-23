@@ -1,10 +1,10 @@
-//! 端到端测试/基准共享基础设施。
+﻿//! 端到端测试/基准共享基础设施。
 //!
 //! 设计目标：用**真实 WebSocket 客户端 + 真实中继**验证协议，而不是 mock：
 //! - [`start_relay`] / [`bench_relay_config`]：在 `127.0.0.1:0` 起进程内中继（随机端口）；
 //! - [`RelayClient`]：tokio-tungstenite WS 客户端，完成 Hello 认证（Ed25519 签名）；
 //! - [`establish_pair`]：直接构造 `PairRecord` 后经中继转发 `session_init`/`session_ack`，
-//!   用 `derive_core::session` 完成 E2E 握手（等价于客户端看到对端上线后的握手流程）；
+//!   用 `drive_core::session` 完成 E2E 握手（等价于客户端看到对端上线后的握手流程）；
 //! - [`latency_stats`]：p50/p95/p99 等延迟统计；
 //! - [`process_memory`]：进程内存采样（中继在进程内，用于近似"中继 + 客户端"占用）。
 //!
@@ -14,23 +14,23 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use derive_core::identity::{Identity, PublicIdentity};
-use derive_core::pairing::{PairRecord, PAIRING_VERSION};
-use derive_core::peer::PeerMessage;
-use derive_core::session::{
+use drive_core::identity::{Identity, PublicIdentity};
+use drive_core::pairing::{PairRecord, PAIRING_VERSION};
+use drive_core::peer::PeerMessage;
+use drive_core::session::{
     accept_session_init, complete_session, create_session_init, E2eEnvelope, Session, SessionAckMsg,
     SessionInitMsg,
 };
-use derive_core::util::{blake3_hex, now_ms, random_hex};
-use derive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
-use derive_core::MAX_WIRE_FRAME_BYTES;
+use drive_core::util::{blake3_hex, now_ms, random_hex};
+use drive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
+use drive_core::MAX_WIRE_FRAME_BYTES;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 /// 基准/测试中继统一使用的共享 access_token（与 `RelayConfig` 一致）。
-pub const DEFAULT_TOKEN: &str = "derive-e2e-token";
+pub const DEFAULT_TOKEN: &str = "drive-e2e-token";
 
 /// 单次期望消息的默认等待上限。
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -43,8 +43,8 @@ pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 // ---------------------------------------------------------------------------
 
 /// 测试/基准通用中继配置：绑定 `127.0.0.1:0`、启用可选暂存（若给目录）。
-pub fn relay_config(vault_dir: Option<PathBuf>) -> derive_relay::RelayConfig {
-    let mut config = derive_relay::RelayConfig::new(DEFAULT_TOKEN);
+pub fn relay_config(vault_dir: Option<PathBuf>) -> drive_relay::RelayConfig {
+    let mut config = drive_relay::RelayConfig::new(DEFAULT_TOKEN);
     config.bind = "127.0.0.1:0"
         .parse()
         .expect("127.0.0.1:0 是合法监听地址");
@@ -57,7 +57,7 @@ pub fn relay_config(vault_dir: Option<PathBuf>) -> derive_relay::RelayConfig {
 /// 协议默认 200 帧/秒（突发 400）会限制**持续**发送速率，测延迟时逐消息排队会
 /// 放大 p95；基准关心的是"加密 → WS → 中继转发 → WS → 解密"这条路径本身。
 /// 默认配置下的限流行为由中继单测覆盖，不在此重复。
-pub fn bench_relay_config() -> derive_relay::RelayConfig {
+pub fn bench_relay_config() -> drive_relay::RelayConfig {
     let mut config = relay_config(None);
     config.rate_limit_per_sec = 0; // 0 = 关闭令牌桶
     config.rate_limit_burst = 0;
@@ -67,8 +67,8 @@ pub fn bench_relay_config() -> derive_relay::RelayConfig {
 }
 
 /// 启动进程内中继；返回时监听端口已就绪。
-pub async fn start_relay(config: derive_relay::RelayConfig) -> Result<derive_relay::RelayHandle> {
-    derive_relay::start(config).await.context("启动进程内中继失败")
+pub async fn start_relay(config: drive_relay::RelayConfig) -> Result<drive_relay::RelayHandle> {
+    drive_relay::start(config).await.context("启动进程内中继失败")
 }
 
 /// 在**指定地址**重启中继（断线重连测试用）。
@@ -77,12 +77,12 @@ pub async fn start_relay(config: derive_relay::RelayConfig) -> Result<derive_rel
 /// 返回值与原中继相同的监听地址，客户端按固定 URL 自动重连。
 pub async fn restart_relay_on(
     addr: std::net::SocketAddr,
-) -> Result<derive_relay::RelayHandle> {
+) -> Result<drive_relay::RelayHandle> {
     let mut last_error = None;
     for _ in 0..120 {
         let mut config = relay_config(None);
         config.bind = addr;
-        match derive_relay::start(config).await {
+        match drive_relay::start(config).await {
             Ok(handle) => return Ok(handle),
             Err(error) => {
                 last_error = Some(error);
@@ -354,7 +354,7 @@ pub async fn establish_pair(
 
 /// 构造一条剪切板 `PeerMessage`（文本经 `ClipboardPayload` 规范化）。
 pub fn clipboard_message(origin: &str, seq: u64, text: &str) -> Result<PeerMessage> {
-    use derive_core::clipboard::{ClipboardEvent, ClipboardPayload};
+    use drive_core::clipboard::{ClipboardEvent, ClipboardPayload};
 
     let payload = ClipboardPayload::text(text).context("构造剪切板载荷失败")?;
     Ok(PeerMessage::Clipboard {
@@ -384,7 +384,7 @@ pub fn text_payload(len: usize) -> String {
 
 /// 生成随机二进制数据（用于分块吞吐，避免 zstd/重复模式影响）。
 pub fn random_data(len: usize) -> Vec<u8> {
-    derive_core::util::random_bytes(len)
+    drive_core::util::random_bytes(len)
 }
 
 // ---------------------------------------------------------------------------

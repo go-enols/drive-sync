@@ -1,6 +1,6 @@
-//! 统一错误类型。
+﻿//! 统一错误类型。
 
-/// derive-core 的错误类型。
+/// drive-core 的错误类型。
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
     #[error("编解码错误: {0}")]

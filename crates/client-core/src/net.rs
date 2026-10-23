@@ -1,4 +1,4 @@
-//! WebSocket 客户端：连接中继、Hello 认证、消息收发、WS Ping 心跳。
+﻿//! WebSocket 客户端：连接中继、Hello 认证、消息收发、WS Ping 心跳。
 //!
 //! 只处理"一条连接"的生命周期；自动重连/退避在 [`crate::runtime`] 里。
 //! wss:// 需要启用本 crate 的 `tls` feature（映射到 tokio-tungstenite 的
@@ -7,10 +7,10 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use derive_core::identity::Identity;
-use derive_core::util::random_hex;
-use derive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
-use derive_core::MAX_WIRE_FRAME_BYTES;
+use drive_core::identity::Identity;
+use drive_core::util::random_hex;
+use drive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
+use drive_core::MAX_WIRE_FRAME_BYTES;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;

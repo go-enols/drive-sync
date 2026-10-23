@@ -1,7 +1,7 @@
-//! `status` 子命令：只读展示本地状态（不需要网络）。
+﻿//! `status` 子命令：只读展示本地状态（不需要网络）。
 
 use anyhow::{Context, Result};
-use derive_client::Spool;
+use drive_client::Spool;
 
 use crate::common::{format_ms, human_bytes, App};
 
@@ -11,7 +11,7 @@ pub fn run(app: &App) -> Result<()> {
     println!("数据目录: {}", app.data_dir.display());
 
     if !store.identity_exists() {
-        println!("设备: 未初始化（运行 `derive-sync init --name <设备名>`）");
+        println!("设备: 未初始化（运行 `drive-sync init --name <设备名>`）");
         let relay = app.relay.clone().unwrap_or(config.relay_url);
         println!(
             "中继: {}",
@@ -53,7 +53,7 @@ pub fn run(app: &App) -> Result<()> {
         );
     }
     println!(
-        "  提示: 配对记录永久有效（无 TTL）；`derive-sync peers list` 查看详情，`derive-sync peers remove <device_id|前缀>` 解除配对。"
+        "  提示: 配对记录永久有效（无 TTL）；`drive-sync peers list` 查看详情，`drive-sync peers remove <device_id|前缀>` 解除配对。"
     );
 
     let (catalog, revision) = store.load_catalog()?;

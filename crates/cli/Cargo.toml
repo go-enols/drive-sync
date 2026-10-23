@@ -1,0 +1,37 @@
+[package]
+name = "derive-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "derive-sync 命令行客户端（Windows/Linux 桌面端）"
+
+[[bin]]
+name = "derive-sync"
+path = "src/main.rs"
+
+[features]
+default = []
+# 连接 wss:// 中继需要启用（会编译 rustls 依赖）。
+tls = ["derive-client/tls"]
+
+[dependencies]
+derive-core = { workspace = true }
+derive-client = { workspace = true }
+tokio = { workspace = true }
+futures-util = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+arboard = { workspace = true }
+blake3 = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+tempfile = "3"

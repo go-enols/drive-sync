@@ -1,0 +1,28 @@
+sync.example.com {
+	encode zstd gzip
+
+	# WebSocket 中继端点
+	@ws {
+		path /ws
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @ws 127.0.0.1:8787 {
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+		}
+	}
+
+	# 健康检查
+	reverse_proxy /healthz 127.0.0.1:8787
+
+	# 不缓存任何请求；限制请求体（仅 WS 帧，正常 ≤ 8MiB）
+	header {
+		Cache-Control "no-store"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+	request_body {
+		max_size 16MB
+	}
+}

@@ -1,0 +1,21 @@
+[package]
+name = "derive-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "derive-sync 协议核心：身份、配对、E2E 加密、剪切板、软件目录 CRDT"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+x25519-dalek = { workspace = true }
+chacha20poly1305 = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+zstd = { workspace = true }

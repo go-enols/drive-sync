@@ -1,0 +1,4 @@
+# 项目级 Cargo 源配置：覆盖机器全局配置里失效的 USTC 镜像（403/429 限流）。
+# 全局配置(~/.cargo/config.toml)使用 replace-with='ustc'，这里只替换该源的地址。
+[source.ustc]
+registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"

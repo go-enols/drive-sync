@@ -1,0 +1,33 @@
+[package]
+name = "derive-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "derive-sync 中继服务器：不持久化转发内容，只负责连接认证、配对路由、E2E 密文转发与可选 30 天加密暂存"
+
+[lib]
+name = "derive_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "derive-relay"
+path = "src/main.rs"
+
+[dependencies]
+derive-core = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+tempfile = "3"
+derive-core = { workspace = true }

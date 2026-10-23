@@ -1,0 +1,12 @@
+[Unit]
+Description=derive-sync daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/derive-sync daemon --relay wss://sync.example.com --token CHANGE_ME
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

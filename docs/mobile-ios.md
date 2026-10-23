@@ -1,4 +1,4 @@
-# drive-sync iOS 客户端（SwiftUI）
+﻿# drive-sync iOS 客户端（SwiftUI）
 
 > 版本：v0.2.0（2026-10 原型） · Bundle ID：`dev.drivesync.mobile` · Deployment Target：iOS 16.0
 > 代码：`mobile/ios/**` · CI：`.github/workflows/ios.yml` · 共享 C ABI：`crates/mobile-core/include/drive_mobile.h`
@@ -76,7 +76,7 @@ mobile/ios/
 | 用途 | 要求 |
 |---|---|
 | 本地构建 | macOS 13+、Xcode 15+（含 Command Line Tools）、`brew install xcodegen`、Rust stable + `rustup target add` |
-| CI | GitHub Actions `macos-14`（自带 Xcode 15.x），无需签名证书 |
+| CI | GitHub Actions `macos-15`（自带 Xcode 15.x），无需签名证书 |
 | 最低系统 | iOS 16.0 |
 
 > 本仓库开发机是 Windows，**无法本地编译 Swift/Xcode**；Swift 代码由 CI 的 `xcodebuild` 验证。

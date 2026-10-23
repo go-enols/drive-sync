@@ -329,7 +329,7 @@ VPS (1C1G 起) 或 NAS
 | 版本 | 范围 | 状态 |
 |---|---|---|
 | v0.1 原型 | Rust 协议核心、中继、CLI、Windows/Linux 剪切板、目录、文件传输、暂存 TTL、配对显式撤销、e2e 测试、延迟基准 | **已完成（152 项测试，commit d65a265）** |
-| v0.2（当前交付） | 项目更名 drive-sync；离线撤销通知信箱；90 天不活跃过期；自动更新（签名清单）；GitHub Actions 多平台产物（Windows/Linux/macOS 桌面 + Android APK + iOS 模拟器包）；移动端原型 App（无感剪切板按平台能力实现） | **已完成（222 项测试全绿，CI 构建中）** |
+| v0.2（当前交付） | 项目更名 drive-sync；离线撤销通知信箱；90 天不活跃过期；自动更新（签名清单）；GitHub Actions 多平台产物（Windows/Linux/macOS 桌面 + Android APK + iOS 模拟器包）；移动端原型 App（无感剪切板按平台能力实现） | **已完成（222 项测试全绿；CI / Release / Android APK / iOS 模拟器构建全绿，v0.2.0 已发布）** |
 | v0.3 | 局域网 mDNS + QUIC 直连；二进制帧/CBOR；桌面托盘 GUI；systemd/自启动；移动端系统推送（FCM/APNs）；中继 Docker 化与会话指标 | 计划 |
 | v0.3 | Android/iOS App（推送→拉取→确认链路、分享面板、二维码配对）；国内厂商推送调研 | 计划 |
 | v1.0 | 多用户/多租户、设备撤销与密钥轮换、Double Ratchet/后量子、审计与合规、自动更新 | 计划 |

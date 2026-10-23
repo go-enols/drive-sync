@@ -26,19 +26,23 @@ if [[ ! -f "${HEADER}" ]]; then
   exit 1
 fi
 
+# iOS 最低部署版本必须与 Xcode 工程一致（否则 zstd/blake3 等 C 依赖会按新 SDK 编译而链接到旧 min version）。
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-16.0}"
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-16.0}"
+
 CARGO_FLAGS="${CARGO_FLAGS:-}"
 
 echo "==> rustup target add ${DEVICE_TARGET} ${SIM_ARM_TARGET} ${SIM_X86_TARGET}"
 rustup target add "${DEVICE_TARGET}" "${SIM_ARM_TARGET}" "${SIM_X86_TARGET}"
 
 echo "==> cargo build -p drive-mobile --release（device: ${DEVICE_TARGET}）"
-cargo build -p drive-mobile --release --target "${DEVICE_TARGET}" ${CARGO_FLAGS}
+cargo rustc -p drive-mobile --release --target "${DEVICE_TARGET}" --lib --crate-type staticlib ${CARGO_FLAGS}
 
 echo "==> cargo build -p drive-mobile --release（sim: ${SIM_ARM_TARGET}）"
-cargo build -p drive-mobile --release --target "${SIM_ARM_TARGET}" ${CARGO_FLAGS}
+cargo rustc -p drive-mobile --release --target "${SIM_ARM_TARGET}" --lib --crate-type staticlib ${CARGO_FLAGS}
 
 echo "==> cargo build -p drive-mobile --release（sim: ${SIM_X86_TARGET}）"
-cargo build -p drive-mobile --release --target "${SIM_X86_TARGET}" ${CARGO_FLAGS}
+cargo rustc -p drive-mobile --release --target "${SIM_X86_TARGET}" --lib --crate-type staticlib ${CARGO_FLAGS}
 
 DEVICE_LIB="${ROOT_DIR}/target/${DEVICE_TARGET}/release/libdrive_mobile.a"
 SIM_ARM_LIB="${ROOT_DIR}/target/${SIM_ARM_TARGET}/release/libdrive_mobile.a"

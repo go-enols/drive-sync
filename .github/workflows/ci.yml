@@ -92,7 +92,9 @@ jobs:
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libwayland-dev
       - name: Build release binaries
+        shell: bash
         run: |
+          set -euo pipefail
           # 发布产物启用 tls feature（可连 wss:// 中继）；与 release.yml 保持一致。
           cargo build --release --locked -p drive-cli -p drive-relay -p drive-updater --bins \
             --features drive-cli/tls

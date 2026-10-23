@@ -76,11 +76,13 @@ fn peers(dir: &Path) -> Result<Vec<drive_core::pairing::PairRecord>> {
 }
 
 async fn assert_clipboard_not_synced(a: &mut ClientNode, b: &mut ClientNode) -> Result<()> {
-    a.set_clipboard_text("revoked offline: A->B must fail").await?;
+    a.set_clipboard_text("revoked offline: A->B must fail")
+        .await?;
     if b.recv_clipboard(Duration::from_secs(2)).await.is_ok() {
         bail!("离线撤销后 A→B 剪切板仍生效（不应发生）");
     }
-    b.set_clipboard_text("revoked offline: B->A must fail").await?;
+    b.set_clipboard_text("revoked offline: B->A must fail")
+        .await?;
     if a.recv_clipboard(Duration::from_secs(2)).await.is_ok() {
         bail!("离线撤销后 B→A 剪切板仍生效（不应发生）");
     }
@@ -96,7 +98,15 @@ async fn offline_revoke_cleans_peer_via_relay_mailbox_and_repairs() -> Result<()
     let relay = start_relay(relay_config_with_data_dir(None, state.clone())).await?;
     let url = relay.ws_url();
 
-    pair_nodes(&dir_a, &dir_b, "离线撤销A", "离线撤销B", &url, DEFAULT_TOKEN).await?;
+    pair_nodes(
+        &dir_a,
+        &dir_b,
+        "离线撤销A",
+        "离线撤销B",
+        &url,
+        DEFAULT_TOKEN,
+    )
+    .await?;
 
     // 1) 只启动 A（B 离线）。外部删除 A 的 B 配对记录（模拟另一进程 peers remove）。
     let mut a = ClientNode::start(&dir_a, &url, DEFAULT_TOKEN)?;
@@ -109,9 +119,10 @@ async fn offline_revoke_cleans_peer_via_relay_mailbox_and_repairs() -> Result<()
     );
 
     // A 检测到外部删除 → emit PeerRevoked（B 离线 notified=false）+ 生成离线通知。
-    a.wait_event(LONG, |event| {
-        matches!(event, RuntimeEvent::PeerRevoked { device_id, .. } if *device_id == b_id)
-    })
+    a.wait_event(
+        LONG,
+        |event| matches!(event, RuntimeEvent::PeerRevoked { device_id, .. } if *device_id == b_id),
+    )
     .await?;
     a.wait_event(LONG, |event| {
         matches!(event, RuntimeEvent::RevocationQueued { device_id, .. } if *device_id == b_id)
@@ -146,7 +157,15 @@ async fn offline_revoke_cleans_peer_via_relay_mailbox_and_repairs() -> Result<()
     // 4) 重新配对 → 恢复会话与同步（证明离线撤销后必须重新配对）。
     a.shutdown().await?;
     b.shutdown().await?;
-    pair_nodes(&dir_a, &dir_b, "离线撤销A", "离线撤销B", &url, DEFAULT_TOKEN).await?;
+    pair_nodes(
+        &dir_a,
+        &dir_b,
+        "离线撤销A",
+        "离线撤销B",
+        &url,
+        DEFAULT_TOKEN,
+    )
+    .await?;
     let mut a = ClientNode::start(&dir_a, &url, DEFAULT_TOKEN)?;
     let mut b = ClientNode::start(&dir_b, &url, DEFAULT_TOKEN)?;
     a.wait_authenticated().await?;
@@ -154,7 +173,8 @@ async fn offline_revoke_cleans_peer_via_relay_mailbox_and_repairs() -> Result<()
     let b_id = b.device_id().to_string();
     a.wait_session(&b_id).await?;
     b.wait_session(&a_id).await?;
-    a.set_clipboard_text("re-paired after offline revoke").await?;
+    a.set_clipboard_text("re-paired after offline revoke")
+        .await?;
     assert_eq!(
         b.recv_clipboard(DEFAULT_EVENT_TIMEOUT).await?.as_text()?,
         "re-paired after offline revoke"

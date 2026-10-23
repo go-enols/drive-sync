@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use drive_client::{RuntimeEvent, Store};
-use drive_e2e::client_harness::{
-    pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN,
-};
+use drive_e2e::client_harness::{pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN};
 use drive_e2e::harness::{relay_config, start_relay};
 use tempfile::TempDir;
 
@@ -56,7 +54,8 @@ async fn assert_clipboard_not_synced(a: &mut ClientNode, b: &mut ClientNode) -> 
     if b.recv_clipboard(Duration::from_secs(2)).await.is_ok() {
         bail!("过期配对后 A→B 剪切板仍然同步（不应发生）");
     }
-    b.set_clipboard_text("expired pair: must not sync back").await?;
+    b.set_clipboard_text("expired pair: must not sync back")
+        .await?;
     if a.recv_clipboard(Duration::from_secs(2)).await.is_ok() {
         bail!("过期配对后 B→A 剪切板仍然同步（不应发生）");
     }
@@ -108,9 +107,10 @@ async fn inactive_pair_expires_after_90_days_and_requires_re_pairing() -> Result
         );
     }
     // B 侧也应独立过期。
-    b.wait_event(Duration::from_secs(15), |event| {
-        matches!(event, RuntimeEvent::PeerExpired { device_id, .. } if *device_id == a_id)
-    })
+    b.wait_event(
+        Duration::from_secs(15),
+        |event| matches!(event, RuntimeEvent::PeerExpired { device_id, .. } if *device_id == a_id),
+    )
     .await?;
 
     // 双方 peers 记录被自动删除；没有建立会话；同步不生效。

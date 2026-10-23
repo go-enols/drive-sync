@@ -19,7 +19,7 @@ derive-sync 的做法：**中继只是一台不存内容的交换机**；所有�
 | 剪切板同步 | 文本 / 富文本 / PNG 图片；zstd 压缩、BLAKE3 去重、回环抑制、离线补发；每设备/每类型可开关 |
 | 软件目录 | 仅同步元数据（名称/版本/平台/大小/BLAKE3）；HLC LWW CRDT + 墓碑，离线可合并 |
 | 软件本体中转 | 设备间 E2E 分块流式传输（64KiB 块、流控、断点续传、整体 BLAKE3 校验）；中继零落盘 |
-| 首次配对 | 一次性 8 位码/二维码 + 6 位 SAS 防 MITM；配对后默认自动认证 |
+| 首次配对 | 一次性 8 位码/二维码 + 6 位 SAS 防 MITM；**配对永久有效（无 TTL）**，离线多久/重启/换网络/中继重启都无需重新配对；只有任一方显式 `peers remove` 才失效 |
 | 可选云端暂存 | 客户端随机密钥加密后上传；服务端 TTL 强制 ≤ 30 天并定时删除；密钥只在设备端 |
 | 安全 | Ed25519 身份、X25519 连接级前向保密、XChaCha20-Poly1305、零信任中继 |
 | 跨平台 | Rust 核心复用；桌面 CLI 已实现，移动端方案见文档 |
@@ -70,10 +70,17 @@ cargo build --release -p derive-relay -p derive-cli
 ./target/release/derive-sync vault put --path ./big.iso --ttl-days 7
 ./target/release/derive-sync vault list
 ./target/release/derive-sync vault get <object_id> --out ./big.iso
+
+# 8. 配对管理（配对永久有效；只有显式删除才会失效）
+./target/release/derive-sync peers list
+./target/release/derive-sync peers remove <device_id>   # 撤销信任：对方无法再与本机同步
 ```
 
 注意事项：
 
+- **配对永久有效**：配对记录保存在本地 `peers.json`，没有过期时间；离线多久、重启、换网络、中继重启、升级应用（保留数据目录）都不需要重新配对。唯一失效方式是任一方执行 `peers remove`；删除 `identity.json` 等于换新设备身份，所有配对都需要重来。
+- 撤销是**单向即时生效**的：删除方立刻拒绝对方；若对方在线会尽力收到 `PairRevoked` 并自动清理记录；若对方离线，其后续同步会失败（安全兜底），需要双方删除后重新配对。
+- `peers list / remove` 是纯本地操作，daemon 运行时也可用（daemon 会在 2s 内检测到并实时断开对应会话）。
 - **中继默认同一设备只允许一个连接**：daemon 运行时执行 `pair`/`catalog fetch`/`vault` 等一次性命令会互踢连接。要么先停 daemon，要么给中继加 `--allow-multi-conn`（原型下不真正支持并行多连接，仅不踢旧连接）。
 - `catalog fetch` 需要**持有该软件且 daemon 在线**的已配对设备；若对方离线会明确失败。
 - `wss://` 需启用 TLS feature（`derive-client`/`derive-cli` 的 `tls` feature，依赖 rustls-webpki-roots）；本仓库默认构建为 `ws://`。

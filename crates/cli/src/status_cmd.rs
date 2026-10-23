@@ -52,6 +52,9 @@ pub fn run(app: &App) -> Result<()> {
             format_ms(peer.paired_at_ms)
         );
     }
+    println!(
+        "  提示: 配对记录永久有效（无 TTL）；`derive-sync peers list` 查看详情，`derive-sync peers remove <device_id|前缀>` 解除配对。"
+    );
 
     let (catalog, revision) = store.load_catalog()?;
     let index = store.load_local_index()?;

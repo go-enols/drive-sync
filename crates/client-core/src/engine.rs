@@ -174,6 +174,24 @@ pub enum RuntimeEvent {
         from: String,
         object_id: String,
     },
+    /// 外部 peers.json 新增/更新了配对记录（如 CLI 完成配对），已重新加载。
+    PeersReloaded {
+        count: usize,
+    },
+    /// 本机显式删除了某个配对记录（外部 peers.json 变更或收到对端撤销后清理）。
+    PeerRevoked {
+        device_id: String,
+        name: String,
+        reason: String,
+        /// 是否通过现有 E2E 会话成功把 `PairRevoked` 通知发给了对端。
+        notified: bool,
+    },
+    /// 收到对端解除配对通知，本地 PairRecord 已删除。
+    PeerUnpaired {
+        device_id: String,
+        name: String,
+        reason: String,
+    },
     RelayError {
         code: String,
         message: String,
@@ -274,6 +292,27 @@ impl RuntimeEvent {
             Self::VaultKeyReceived { from, object_id } => {
                 format!("收到暂存密钥: {object_id}（来自 {from}）")
             }
+            Self::PeersReloaded { count } => {
+                format!("检测到外部配对变更，已重新加载（{count} 个已配对设备）")
+            }
+            Self::PeerRevoked {
+                device_id,
+                name,
+                reason,
+                notified,
+            } => format!(
+                "已删除配对记录: {name} ({device_id})，原因: {reason}；{}",
+                if *notified {
+                    "已通知对端解除配对"
+                } else {
+                    "对端离线，未能发送撤销通知（下次握手会被拒绝）"
+                }
+            ),
+            Self::PeerUnpaired {
+                device_id,
+                name,
+                reason,
+            } => format!("对端已解除配对: {name} ({device_id})，本地配对记录已删除（原因: {reason}）"),
             Self::RelayError { code, message } => format!("中继错误 [{code}]: {message}"),
             Self::Error { message } => format!("内部错误: {message}"),
             Self::Stopped => "已停止".to_string(),
@@ -467,6 +506,8 @@ pub struct Engine {
     vault_mtime: Option<u64>,
     catalog_mtime: Option<u64>,
     local_index_mtime: Option<u64>,
+    /// peers.json 的 mtime（检测外部 `peers remove`/`pair` 写入）。
+    peers_mtime: Option<u64>,
 }
 
 impl Engine {
@@ -487,6 +528,7 @@ impl Engine {
         let vault_mtime = store.file_mtime_ms(&store.vault_keys_path());
         let catalog_mtime = store.file_mtime_ms(&store.catalog_path());
         let local_index_mtime = store.file_mtime_ms(&store.local_index_path());
+        let peers_mtime = store.file_mtime_ms(&store.peers_path());
         let _ = spool.prune_expired(now_ms());
         Ok(Self {
             store,
@@ -519,6 +561,7 @@ impl Engine {
             vault_mtime,
             catalog_mtime,
             local_index_mtime,
+            peers_mtime,
         })
     }
 
@@ -959,12 +1002,74 @@ impl Engine {
                 key_hex,
                 meta,
             } => self.handle_vault_share(from, object_id, key_hex, meta, &mut out),
+            PeerMessage::PairRevoked { reason } => {
+                self.handle_pair_revoked(from, &reason, &mut out)
+            }
             PeerMessage::Ping { ts_ms } => {
                 self.send_peer(from, PeerMessage::Pong { ts_ms }, &mut out);
             }
             PeerMessage::Pong { .. } => {}
         }
         out
+    }
+
+    /// 本机（外部 CLI 或收到对端撤销）删除配对关系后的统一清理：
+    /// 销毁会话/握手状态/传输/offer 缓存/spool/可用性缓存，并通知上层。
+    fn cleanup_peer_relationship(&mut self, peer_id: &str, out: &mut EngineOutput) {
+        if self.sessions.remove(peer_id).is_some() {
+            out.events.push(RuntimeEvent::SessionClosed {
+                peer_id: peer_id.to_string(),
+            });
+        }
+        self.pending_inits.remove(peer_id);
+        self.peer_have.remove(peer_id);
+        self.online_since.remove(peer_id);
+        // 进行中的传输：发送端丢弃；接收端删除 .part（关系已解除，不应再续传）。
+        self.outgoing.retain(|_, transfer| transfer.peer_id != peer_id);
+        let incoming_ids: Vec<String> = self
+            .incoming
+            .iter()
+            .filter(|(_, transfer)| transfer.peer_id == peer_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for transfer_id in incoming_ids {
+            if let Some(transfer) = self.incoming.remove(&transfer_id) {
+                transfer.receiver.discard();
+            }
+        }
+        self.offer_cache
+            .retain(|(peer, _), _| peer.as_str() != peer_id);
+        // spool 中该对端的待发消息全部丢弃。
+        match self.spool.remove_for_peer(peer_id) {
+            Ok(removed) if removed > 0 => {
+                tracing::info!(peer = %peer_id, removed, "解除配对：已清空该对端的离线待发消息");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(peer = %peer_id, error = %e, "解除配对：清理 spool 失败"),
+        }
+    }
+
+    /// 处理对端发来的 `PairRevoked`：删除本地 PairRecord 并清理关系，绝不自动重建。
+    fn handle_pair_revoked(&mut self, from: &str, reason: &str, out: &mut EngineOutput) {
+        let name = self
+            .peers
+            .iter()
+            .find(|peer| peer.peer.device_id == from)
+            .map(|peer| peer.display_name())
+            .unwrap_or_else(|| from.to_string());
+        if let Err(e) = self.store.remove_peer(from) {
+            out.events.push(RuntimeEvent::Error {
+                message: format!("删除被撤销的配对记录失败（{from}）: {e}"),
+            });
+        }
+        self.peers.retain(|peer| peer.peer.device_id != from);
+        self.peers_mtime = self.store.file_mtime_ms(&self.store.peers_path());
+        self.cleanup_peer_relationship(from, out);
+        out.events.push(RuntimeEvent::PeerUnpaired {
+            device_id: from.to_string(),
+            name,
+            reason: reason.to_string(),
+        });
     }
 
     // ------------------------------------------------------------------
@@ -2065,6 +2170,89 @@ impl Engine {
         }
     }
 
+    /// 检测其他进程对 `peers.json` 的写入（`derive-sync peers remove` / `pair`）：
+    /// - 被删除的对端：先经现有会话尽力发送 `PairRevoked`，再销毁关系并 emit 事件；
+    /// - 新增/更新的对端：重新加载，后续 presence/兜底逻辑会正常建立会话。
+    fn detect_external_peer_changes(&mut self, now: u64, out: &mut EngineOutput) {
+        let path = self.store.peers_path();
+        let mtime = self.store.file_mtime_ms(&path);
+        if mtime == self.peers_mtime {
+            return;
+        }
+        let disk_peers = match self.store.load_peers() {
+            Ok(peers) => peers,
+            Err(error) => {
+                self.peers_mtime = mtime;
+                tracing::warn!(error = %error, "重新加载 peers.json 失败");
+                return;
+            }
+        };
+        self.peers_mtime = mtime;
+        let disk_ids: BTreeSet<String> = disk_peers
+            .iter()
+            .map(|peer| peer.peer.device_id.clone())
+            .collect();
+        let removed_ids: Vec<String> = self
+            .peers
+            .iter()
+            .map(|peer| peer.peer.device_id.clone())
+            .filter(|id| !disk_ids.contains(id))
+            .collect();
+
+        for peer_id in removed_ids {
+            let name = self
+                .peers
+                .iter()
+                .find(|peer| peer.peer.device_id == peer_id)
+                .map(|peer| peer.display_name())
+                .unwrap_or_else(|| peer_id.clone());
+            // 1) 先尽力经现有 E2E 会话通知对端（离线则下次握手会被拒绝，安全兜底）。
+            let reason = "本机已删除配对记录".to_string();
+            let notified = self.send_peer(
+                &peer_id,
+                PeerMessage::PairRevoked {
+                    reason: reason.clone(),
+                },
+                out,
+            );
+            // 2) 销毁关系（会话/传输/spool/缓存）。
+            self.cleanup_peer_relationship(&peer_id, out);
+            out.events.push(RuntimeEvent::PeerRevoked {
+                device_id: peer_id.clone(),
+                name,
+                reason,
+                notified,
+            });
+        }
+
+        // 新增或字段更新的配对记录。
+        let mut changes = 0usize;
+        for record in disk_peers {
+            match self
+                .peers
+                .iter_mut()
+                .find(|peer| peer.peer.device_id == record.peer.device_id)
+            {
+                Some(slot) => *slot = record,
+                None => {
+                    self.peers.push(record);
+                    changes += 1;
+                }
+            }
+        }
+        self.peers
+            .retain(|peer| disk_ids.contains(&peer.peer.device_id));
+        self.peers
+            .sort_by(|a, b| a.peer.device_id.cmp(&b.peer.device_id));
+        if changes > 0 {
+            out.events.push(RuntimeEvent::PeersReloaded {
+                count: self.peers.len(),
+            });
+            // 新增的在线对端：按正常规则（小 id 立即 / 较大侧兜底延迟）建立会话。
+            self.retry_sessions(now, out);
+        }
+    }
+
     // ------------------------------------------------------------------
     // 周期任务
     // ------------------------------------------------------------------
@@ -2100,6 +2288,7 @@ impl Engine {
         if now.saturating_sub(self.last_vault_check_ms) >= 2_000 {
             self.last_vault_check_ms = now;
             self.detect_external_state_changes(now, &mut out);
+            self.detect_external_peer_changes(now, &mut out);
         }
 
         // 5) 会话握手重试。

@@ -579,3 +579,98 @@ pub fn short_peer_label(peer: &PublicIdentity) -> String {
 pub fn short_id() -> String {
     random_hex(8)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use derive_core::identity::Identity;
+    use derive_core::pairing::{PairRecord, PAIRING_VERSION};
+    use tempfile::TempDir;
+
+    fn record(identity: &Identity, label: &str) -> PairRecord {
+        PairRecord {
+            v: PAIRING_VERSION,
+            peer: identity.public(),
+            relay_url: "ws://127.0.0.1:8787/ws".into(),
+            paired_at_ms: 1_700_000_000_000,
+            label: label.to_string(),
+            pairing_fingerprint: "0123456789abcdef".into(),
+        }
+    }
+
+    #[test]
+    fn peers_persist_across_reopen_without_ttl() {
+        let dir = TempDir::new().expect("临时目录");
+        let identity_a = Identity::generate("设备A");
+        let identity_b = Identity::generate("设备B");
+        {
+            let store = Store::open(dir.path()).expect("打开 store");
+            store
+                .save_peers(&[record(&identity_a, "peer-a"), record(&identity_b, "peer-b")])
+                .expect("写入 peers");
+        }
+        // 模拟进程重启 / 长时间之后重新打开：配对记录必须原样保留（无 TTL）。
+        let store = Store::open(dir.path()).expect("重开 store");
+        let peers = store.load_peers().expect("读取 peers");
+        assert_eq!(peers.len(), 2);
+        assert!(peers
+            .iter()
+            .any(|peer| peer.peer.device_id == identity_a.device_id()));
+        assert!(peers
+            .iter()
+            .any(|peer| peer.peer.device_id == identity_b.device_id()));
+        assert_eq!(peers[0].paired_at_ms, 1_700_000_000_000);
+        assert_eq!(peers[0].pairing_fingerprint, "0123456789abcdef");
+
+        // peers.json 仍是合法 JSON（原子写不应留下半截文件）。
+        let raw = std::fs::read_to_string(store.peers_path()).expect("读文件");
+        let parsed: serde_json::Value = serde_json::from_str(&raw).expect("解析 JSON");
+        assert_eq!(parsed["v"], STORE_VERSION);
+        assert_eq!(parsed["peers"].as_array().expect("数组").len(), 2);
+    }
+
+    #[test]
+    fn upsert_peer_dedups_and_keeps_latest_fields() {
+        let dir = TempDir::new().expect("临时目录");
+        let store = Store::open(dir.path()).expect("打开 store");
+        let identity_b = Identity::generate("设备B");
+
+        let mut first = record(&identity_b, "旧标签");
+        first.label = "旧标签".into();
+        store.upsert_peer(first).expect("首次 upsert");
+
+        let mut second = record(&identity_b, "新标签");
+        second.label = "新标签".into();
+        second.paired_at_ms = 1_800_000_000_000;
+        store.upsert_peer(second).expect("再次 upsert");
+
+        let peers = store.load_peers().expect("读取 peers");
+        assert_eq!(peers.len(), 1, "同一 device_id 不应产生重复记录");
+        assert_eq!(peers[0].label, "新标签");
+        assert_eq!(peers[0].paired_at_ms, 1_800_000_000_000);
+    }
+
+    #[test]
+    fn remove_peer_is_idempotent() {
+        let dir = TempDir::new().expect("临时目录");
+        let store = Store::open(dir.path()).expect("打开 store");
+        let identity_a = Identity::generate("设备A");
+        let identity_b = Identity::generate("设备B");
+        store
+            .save_peers(&[record(&identity_a, "a"), record(&identity_b, "b")])
+            .expect("写入 peers");
+
+        assert!(store
+            .remove_peer(&identity_a.device_id())
+            .expect("第一次删除"));
+        let peers = store.load_peers().expect("读取 peers");
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer.device_id, identity_b.device_id());
+
+        // 重复删除：幂等（返回 false，不报错、不影响其它记录）。
+        assert!(!store
+            .remove_peer(&identity_a.device_id())
+            .expect("第二次删除"));
+        assert_eq!(store.load_peers().expect("读取 peers").len(), 1);
+    }
+}

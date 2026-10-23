@@ -10,6 +10,8 @@
 #   5) stop daemons; A `catalog add` a file
 #   6) start A daemon (serves the file); B `catalog fetch` -> verify SHA256
 #   7) stop A daemon; A `vault put` -> `vault get` -> verify SHA256
+#   8) pairing permanence: peers list; while both daemons run, A `peers remove B`
+#      -> B auto-cleans its record within ~2s (PairRevoked); sync stops until re-pair.
 #
 # Usage:
 #   powershell -NoProfile -File scripts/demo.ps1
@@ -114,7 +116,7 @@ function Get-Sha256Hex([string]$path) {
 
 try {
     # ------------------------------------------------------------------
-    Log "STEP 1/7: start relay on 127.0.0.1:$RelayPort"
+    Log "STEP 1/8: start relay on 127.0.0.1:$RelayPort"
     $relayLog = Join-Path $work "relay.out.log"
     $relayErr = Join-Path $work "relay.err.log"
     $relayProc = Start-Process -FilePath $relayExe `
@@ -134,7 +136,7 @@ try {
     Log "relay healthy (http://127.0.0.1:$RelayPort/healthz -> 200 ok)"
 
     # ------------------------------------------------------------------
-    Log "STEP 2/7: init two devices"
+    Log "STEP 2/8: init two devices"
     $dirA = Join-Path $work "data-a"
     $dirB = Join-Path $work "data-b"
     $initA = Invoke-Cli @("--data-dir", $dirA, "--relay", $url, "--token", $token, "init", "--name", "demo-A") "init demo-A"
@@ -142,7 +144,7 @@ try {
     if (-not $initA -or -not $initB) { throw "init failed" }
 
     # ------------------------------------------------------------------
-    Log "STEP 3/7: pair A (initiator) with B (joins by 8-digit code)"
+    Log "STEP 3/8: pair A (initiator) with B (joins by 8-digit code)"
     $pairAOut = Join-Path $work "pair-a.out.log"
     $pairAErr = Join-Path $work "pair-a.err.log"
     $pairA = Start-Process -FilePath $sync `
@@ -165,7 +167,7 @@ try {
     if (-not $pairB -or -not $paired) { $script:failures += 1; Log-Fail "pair demo-B failed" } else { Log "pair OK" }
 
     # ------------------------------------------------------------------
-    Log "STEP 4/7: daemons (file clipboard) + bidirectional clipboard sync"
+    Log "STEP 4/8: daemons (file clipboard) + bidirectional clipboard sync"
     $clipA = Join-Path $work "clip-a.txt"
     $clipB = Join-Path $work "clip-b.txt"
     Set-Content -Path $clipA -Value "" -NoNewline
@@ -192,7 +194,7 @@ try {
     }
 
     # ------------------------------------------------------------------
-    Log "STEP 5/7: catalog add on A (daemons stopped: relay allows one connection per device)"
+    Log "STEP 5/8: catalog add on A (daemons stopped: relay allows one connection per device)"
     Stop-Daemon $daemonA
     Stop-Daemon $daemonB
     $payload = Join-Path $work "installer.bin"
@@ -207,7 +209,7 @@ try {
     Log "catalog entry = $entryId (sha256=$payloadHash)"
 
     # ------------------------------------------------------------------
-    Log "STEP 6/7: let B sync catalog, then B fetches file from A (verify SHA256)"
+    Log "STEP 6/8: let B sync catalog, then B fetches file from A (verify SHA256)"
     $daemonA2 = Start-Daemon $dirA $clipA "daemon-a2"
     $daemonB2 = Start-Daemon $dirB $clipB "daemon-b2"
     # Wait until B's local catalog contains the entry (synced via snapshot from A).
@@ -238,7 +240,7 @@ try {
     }
 
     # ------------------------------------------------------------------
-    Log "STEP 7/7: vault put on A, share key to B via E2E, B decrypts (TTL 1 day)"
+    Log "STEP 7/8: vault put on A, share key to B via E2E, B decrypts (TTL 1 day)"
     $putOut = Invoke-Cli @("--data-dir", $dirA, "--relay", $url, "--token", $token, "vault", "put", "--path", $payload, "--ttl-days", "1") "vault put"
     $objectId = $null
     if ($putOut -and ($putOut -match '(obj-[0-9a-f]{16})')) { $objectId = $Matches[1] }
@@ -284,6 +286,35 @@ try {
     }
 
     # ------------------------------------------------------------------
+    Log "STEP 8/8: pairing permanence - peers list, online removal, peer auto-cleanup"
+    $daemonA4 = Start-Daemon $dirA $clipA "daemon-a4"
+    $daemonB4 = Start-Daemon $dirB $clipB "daemon-b4"
+    Start-Sleep -Milliseconds 2500
+    $peersListA = & $sync --data-dir $dirA "peers" "list" "--json" 2>&1 | Out-String
+    $devB = [regex]::Match($peersListA, 'dev-[0-9a-f]{16}').Value
+    if ($devB) {
+        Log "peers list OK, paired device: $devB (no TTL: pairing survives restarts/offline)"
+    } else {
+        $script:failures += 1
+        Log-Fail "peers list did not return a paired device: $peersListA"
+    }
+    if ($devB) {
+        Invoke-Cli @("--data-dir", $dirA, "peers", "remove", $devB, "--yes") "peers remove B (daemons running)" | Out-Null
+        $peerCleaned = $false
+        for ($i = 0; $i -lt 24; $i++) {
+            Start-Sleep -Milliseconds 250
+            $peersListB = & $sync --data-dir $dirB "peers" "list" "--json" 2>&1 | Out-String
+            if ($peersListB.Trim() -eq "[]") { $peerCleaned = $true; break }
+        }
+        if ($peerCleaned) {
+            Log "revocation OK: A removed B, B auto-cleaned local record within ~2s (PairRevoked)"
+        } else {
+            $script:failures += 1
+            Log-Fail "B did not auto-clean its peer record after A removed the pairing"
+        }
+    }
+    Stop-Daemon $daemonB4
+    Stop-Daemon $daemonA4
 }
 catch {
     Log-Fail $_.Exception.Message

@@ -173,7 +173,23 @@ A(已运行)                             中继                         B(输入
 - 二维码/带外确认可以跳过人工比对（扫码即认证），但 CLI 仍打印 SAS 供核对。
 - `pairing_fingerprint = hex(BLAKE3(shared))[..16]`，写入 PairRecord，用于两端审计；**不保存 shared/pairing key**。
 - 配对完成即长期信任；后续连接用 §6 会话握手自动认证。
-- 解除信任：删除本地 PairRecord（对端下次会话握手因找不到配对记录而拒绝）。生产增强：可发送撤销通知并轮换长期密钥。
+
+### 5.1 配对持久性（永久有效，无 TTL）
+
+- **配对永久有效（无 TTL）**：不会因为离线多久、重启、重装应用（保留 data_dir）、换网络、换 IP、中继重启而失效，无需重新配对。
+- 配对信息只存在设备本地 `peers.json`；中继不保存配对关系（只保存 120s 的待配对登记）。因此中继地址变化只需更新两端配置中的 `relay`，配对关系仍然有效。
+- 重复配对同一设备是**幂等更新**（`Store::upsert_peer` 按 `device_id` 更新，不产生重复记录）。
+
+### 5.2 解除配对（撤销信任）
+
+唯一能让配对失效的操作是**任一方显式删除本地配对记录**（CLI：`derive-sync peers remove <device_id>`）；此外删除 `identity.json`（换新身份）等同于该设备全部配对失效，需要重新配对。
+
+撤销语义：
+
+1. 删除方（A）立即从 `peers.json` 移除 B；daemon 在 ≤2s 内检测到外部变更，若与 B 存在 E2E 会话，先经该会话尽力发送 `PeerMessage::PairRevoked{reason}`，随后销毁会话、清理该 peer 的 spool/传输/pending 握手；此后 A 拒绝来自 B 的一切会话握手。
+2. 被删除方（B）收到 `PairRevoked` 后删除本地对 A 的 PairRecord、销毁会话并提示"对端已解除配对"；若 B 当时离线，则下次 B 发起会话握手会被 A 拒绝（安全兜底），B 侧表现为同步失败，需双方删除后重新配对。
+3. 重新建立信任只能重新走 §5 配对流程（新配对码/二维码）。
+4. 复制/篡改 `peers.json` 无法获得信任：会话握手需要对方 Ed25519 私钥签名，且对方必须同样保留配对记录；中继无法伪造。
 
 ## 6. E2E 会话握手（连接级前向保密）
 
@@ -231,6 +247,7 @@ A(已运行)                             中继                         B(输入
 | `transfer_done` | transfer_id, total_bytes | 发送完成 |
 | `transfer_error` | transfer_id, message | 传输出错 |
 | `vault_share` | object_id, key_hex, meta | 共享云端暂存对象密钥 |
+| `pair_revoked` | reason | 对端已解除配对；收到后删除本地 PairRecord、销毁会话、清空待发队列 |
 | `ping` / `pong` | ts_ms | 应用层心跳 |
 
 ### 7.1 剪切板同步语义
@@ -330,6 +347,8 @@ A(已运行)                             中继                         B(输入
 ## 10. 版本与错误码
 
 - `PROTOCOL_VERSION = 1`；`Welcome.v` 与 `Hello.v` 不一致时拒绝连接。
+- v0.1.1 起 `PeerMessage` 新增 `pair_revoked`（加性变更；同版本客户端互通无影响，旧版本客户端收到会视为未知消息并忽略该条）。
+- 配对记录本身**没有版本/过期语义**：升级不改变配对有效性；协议版本只在连接握手时校验。
 - 错误码（`error` 与 `pair_result`/`vault_*` 的 message 中）：
 
 | code | 含义 |

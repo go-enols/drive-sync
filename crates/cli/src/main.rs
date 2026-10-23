@@ -5,6 +5,7 @@
 //! - `pair [--qr <扫码串> | --code <8位配对码>] [--yes]`：配对（不带参数为发起方）
 //! - `daemon [--clipboard auto|text|image|file:<path>] [--poll-ms N]`：常驻同步
 //! - `status`：本地状态
+//! - `peers list|remove`：查看 / 删除已配对设备（配对记录无 TTL，只有显式删除才解除）
 //! - `catalog add|list|remove|fetch`：软件目录（本体留在本地，云端只中转）
 //! - `vault put|list|get`：客户端加密的云端暂存（TTL ≤ 30 天）
 //!
@@ -18,6 +19,7 @@ mod clipboard;
 mod common;
 mod daemon;
 mod pair_cmd;
+mod peers_cmd;
 mod status_cmd;
 mod vault_cmd;
 
@@ -90,6 +92,11 @@ enum Command {
     },
     /// 查看本地状态（设备/配对/目录/暂存/spool）。
     Status,
+    /// 查看 / 删除已配对设备（配对永久有效，除非显式删除）。
+    Peers {
+        #[command(subcommand)]
+        command: peers_cmd::PeersCommand,
+    },
     /// 软件目录管理。
     Catalog {
         #[command(subcommand)]
@@ -125,6 +132,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Daemon { clipboard, poll_ms } => {
             daemon::run(&app, &clipboard, poll_ms).await
         }
+        Command::Peers { command } => peers_cmd::run(&app, command),
         Command::Catalog { command } => catalog_cmd::run(&app, command).await,
         Command::Vault { command } => vault_cmd::run(&app, command).await,
     }

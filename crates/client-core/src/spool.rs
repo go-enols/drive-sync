@@ -177,6 +177,18 @@ impl Spool {
         Ok(self.list()?.len())
     }
 
+    /// 删除指定 peer 的全部待发消息，返回删除数量（解除配对时调用）。
+    pub fn remove_for_peer(&self, peer_id: &str) -> Result<usize> {
+        let mut removed = 0;
+        for item in self.list()? {
+            if item.peer_id == peer_id {
+                self.remove(&item.id)?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     pub fn total_bytes(&self) -> Result<u64> {
         let mut total = 0u64;
         if let Ok(entries) = std::fs::read_dir(&self.dir) {

@@ -901,4 +901,125 @@ fn larger_side_fallback_rehandshake_after_connection_replaced() {
     assert_eq!(applied[0].as_text().expect("文本"), "after-fallback");
 }
 
+// ---------------------------------------------------------------------------
+// 显式删除配对 / PairRevoked 实时撤销
+// ---------------------------------------------------------------------------
+
+#[test]
+fn external_peer_removal_revokes_and_cleans_state() {
+    let mut harness = Harness::new();
+    harness.handshake();
+    // 让 spool 里存在该对端的离线消息（验证撤销时会被清理）。
+    harness
+        .a
+        .spool
+        .push(SpoolItem::new(
+            &harness.b_id,
+            PeerMessage::Ping { ts_ms: 1 },
+            0,
+            60_000,
+        ))
+        .expect("写入 spool");
+    assert_eq!(harness.a.spool_count(), 1);
+
+    // 模拟 daemon 运行中用户在另一个进程执行 `derive-sync peers remove`。
+    harness
+        .a
+        .store()
+        .remove_peer(&harness.b_id)
+        .expect("删除本地配对记录");
+    // 2s 外部变更检测周期。
+    let output = harness.a.on_tick(now_ms() + 2_500);
+    assert!(
+        output
+            .outbound
+            .iter()
+            .any(|message| matches!(message, ClientToServer::Relay { .. })),
+        "应在销毁会话前经现有会话尽力发送 PairRevoked"
+    );
+    assert!(
+        output.events.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::PeerRevoked {
+                notified: true,
+                ..
+            }
+        )),
+        "应 emit PeerRevoked 且 notified=true"
+    );
+    let settled = harness.pump(Side::A, output);
+
+    // A 侧：配对记录/会话/spool 全部清理。
+    assert!(harness.a.peers().is_empty(), "A 的配对记录应被移除");
+    assert!(harness.a.sessions().is_empty(), "A 的会话应被销毁");
+    assert_eq!(harness.a.spool_count(), 0, "A 的离线 spool 应被清理");
+
+    // B 侧：收到 PairRevoked → 删除本地记录、销毁会话、emit PeerUnpaired。
+    assert!(harness.b.peers().is_empty(), "B 的配对记录应被删除");
+    assert!(harness.b.sessions().is_empty(), "B 的会话应被销毁");
+    assert!(
+        harness.b.store().load_peers().expect("读取 peers").is_empty(),
+        "B 的 peers.json 应已更新"
+    );
+    assert!(settled
+        .events_b
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::PeerUnpaired { .. })));
+
+    // 重复收到的撤销（此时已无配对记录）：按"未配对设备消息"拒绝，且不重建任何状态。
+    let output = harness.b.handle_peer_message(
+        &harness.a_id,
+        PeerMessage::PairRevoked {
+            reason: "重复通知应幂等".into(),
+        },
+    );
+    assert!(
+        output
+            .events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::Error { .. })),
+        "未配对设备的消息应被拒绝"
+    );
+    assert!(harness.b.sessions().is_empty());
+    assert!(harness.b.peers().is_empty());
+}
+
+#[test]
+fn receiving_pair_revoked_deletes_local_record_and_rejects_session() {
+    let mut harness = Harness::new();
+    harness.handshake();
+
+    let output = harness.b.handle_peer_message(
+        &harness.a_id,
+        PeerMessage::PairRevoked {
+            reason: "对端设备已重置".into(),
+        },
+    );
+    assert!(output.events.iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PeerUnpaired { device_id, .. } if device_id == &harness.a_id
+    )));
+    assert!(harness.b.peers().is_empty());
+    assert!(harness.b.sessions().is_empty());
+    assert!(harness
+        .b
+        .store()
+        .load_peers()
+        .expect("读取 peers")
+        .is_empty());
+
+    // 撤销后收到原对端的 session_init：无配对记录 → 拒绝，不建会话。
+    let init = create_session_init(&harness.a.identity().clone(), &harness.b.identity().public())
+        .expect("创建 init");
+    let rejected = harness.b.handle_server(ServerToClient::SessionInit {
+        from: harness.a_id.clone(),
+        msg: init.msg,
+    });
+    assert!(harness.b.sessions().is_empty());
+    assert!(rejected
+        .events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::Error { .. })));
+}
+
 

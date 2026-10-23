@@ -59,6 +59,12 @@ pub enum PeerMessage {
     /// 应用层心跳（穿透 NAT/保持连接；桌面端 30~60s）。
     Ping { ts_ms: u64 },
     Pong { ts_ms: u64 },
+    /// 对端已解除配对（撤销信任）。
+    ///
+    /// 仅在已有 E2E 会话时尽力发送；接收方应立即删除本地 PairRecord、销毁会话、
+    /// 清理该对端的待发队列，此后不再与该设备同步。若对端离线收不到，
+    /// 下次会话握手会因发起方已无配对记录而被拒绝（安全兜底）。
+    PairRevoked { reason: String },
 }
 
 impl PeerMessage {
@@ -80,6 +86,7 @@ impl PeerMessage {
             Self::VaultShare { .. } => "vault_share",
             Self::Ping { .. } => "ping",
             Self::Pong { .. } => "pong",
+            Self::PairRevoked { .. } => "pair_revoked",
         }
     }
 

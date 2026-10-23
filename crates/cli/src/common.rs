@@ -1,4 +1,4 @@
-﻿//! CLI 公共部分：数据目录解析、配置解析、日志、时间格式化。
+//! CLI 公共部分：数据目录解析、配置解析、日志、时间格式化。
 
 use std::path::PathBuf;
 
@@ -128,4 +128,3 @@ mod tests {
         assert!(!app.data_dir.as_os_str().is_empty());
     }
 }
-

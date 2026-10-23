@@ -1,4 +1,4 @@
-﻿//! `status` 子命令：只读展示本地状态（不需要网络）。
+//! `status` 子命令：只读展示本地状态（不需要网络）。
 
 use anyhow::{Context, Result};
 use drive_client::Spool;
@@ -38,22 +38,30 @@ pub fn run(app: &App) -> Result<()> {
             relay
         }
     );
-    let token_configured =
-        app.token.is_some() || !config.access_token.trim().is_empty();
-    println!("令牌: {}", if token_configured { "已配置" } else { "未配置" });
+    let token_configured = app.token.is_some() || !config.access_token.trim().is_empty();
+    println!(
+        "令牌: {}",
+        if token_configured {
+            "已配置"
+        } else {
+            "未配置"
+        }
+    );
 
     let peers = store.load_peers()?;
     println!("已配对设备: {}", peers.len());
     for peer in &peers {
         println!(
-            "  - {} ({})  配对于 {}",
+            "  - {} ({})  配对于 {}，最近活跃 {}（90 天不活跃将于 {} 失效）",
             peer.display_name(),
             peer.peer.device_id,
-            format_ms(peer.paired_at_ms)
+            format_ms(peer.paired_at_ms),
+            format_ms(peer.last_seen_or_paired()),
+            format_ms(peer.expires_at_ms())
         );
     }
     println!(
-        "  提示: 配对记录永久有效（无 TTL）；`drive-sync peers list` 查看详情，`drive-sync peers remove <device_id|前缀>` 解除配对。"
+        "  提示: 超过 90 天未活跃的配对会自动失效（需重新配对）；`drive-sync peers list` 查看详情，`drive-sync peers remove <device_id|前缀>` 立即解除。"
     );
 
     let (catalog, revision) = store.load_catalog()?;
@@ -80,12 +88,7 @@ pub fn run(app: &App) -> Result<()> {
         .map(|entries| {
             entries
                 .flatten()
-                .filter(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .ends_with(".part")
-                })
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".part"))
                 .count()
         })
         .context("读取 incoming 目录失败")?;

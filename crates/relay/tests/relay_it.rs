@@ -1,15 +1,20 @@
-﻿//! drive-relay 集成测试：真实 WebSocket 客户端覆盖认证、presence、配对、转发与暂存。
+//! drive-relay 集成测试：真实 WebSocket 客户端覆盖认证、presence、配对、转发与暂存。
 //!
 //! 每个测试用 `127.0.0.1:0` 启动独立中继实例，互不干扰。
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use drive_core::identity::Identity;
-use drive_core::pairing::{
-    PairJoinPayload, PairingInitiator, PairingResponder, PAIRING_VERSION,
+use drive_core::pairing::{PairJoinPayload, PairingInitiator, PairingResponder, PAIRING_VERSION};
+use drive_core::revocation::{
+    create_now as create_revocation, reason as revocation_reason, RevocationNotice,
+    REVOCATION_TTL_SECS,
 };
-use drive_core::session::{accept_session_init, complete_session, create_session_init, E2eEnvelope};
+use drive_core::session::{
+    accept_session_init, complete_session, create_session_init, E2eEnvelope,
+};
 use drive_core::util::{now_ms, random_hex};
 use drive_core::vault::VaultMeta;
 use drive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
@@ -25,9 +30,21 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const TEST_TOKEN: &str = "test-token-0123456789abcdef";
 const WAIT: Duration = Duration::from_secs(5);
 
+/// 每个中继实例使用独立状态目录，避免测试间共享撤销通知信箱。
+fn test_data_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "drive-relay-{tag}-{}-{}",
+        std::process::id(),
+        random_hex(6)
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 fn test_config() -> RelayConfig {
     let mut config = RelayConfig::new(TEST_TOKEN);
     config.bind = SocketAddr::from(([127, 0, 0, 1], 0));
+    config.data_dir = test_data_dir("it");
     config
 }
 
@@ -142,7 +159,10 @@ impl Client {
             ..
         } = &welcome
         {
-            assert_eq!(welcome_device, &device_id, "welcome.device_id 必须是当前设备");
+            assert_eq!(
+                welcome_device, &device_id,
+                "welcome.device_id 必须是当前设备"
+            );
         }
         Self {
             ws,
@@ -222,7 +242,10 @@ async fn http_healthz(addr: SocketAddr) -> String {
         .await
         .expect("发送 HTTP 请求失败");
     let mut buffer = Vec::new();
-    stream.read_to_end(&mut buffer).await.expect("读取 HTTP 响应失败");
+    stream
+        .read_to_end(&mut buffer)
+        .await
+        .expect("读取 HTTP 响应失败");
     String::from_utf8_lossy(&buffer).to_string()
 }
 
@@ -253,7 +276,10 @@ async fn healthz_returns_ok() {
     let relay = spawn_relay().await;
     let response = http_healthz(relay.addr).await;
     assert!(response.contains("200"), "响应: {response}");
-    assert!(response.to_ascii_lowercase().contains("ok"), "响应: {response}");
+    assert!(
+        response.to_ascii_lowercase().contains("ok"),
+        "响应: {response}"
+    );
     relay.shutdown().await;
 }
 
@@ -797,7 +823,10 @@ async fn rate_limit_backpressure_timeout_drops_frame_with_error() {
         }
     }
     assert_eq!(pongs, 1, "burst=1 时只允许 1 帧通过");
-    assert_eq!(rate_limited, 2, "背压等待超时的 2 帧应被丢弃并回 rate_limited");
+    assert_eq!(
+        rate_limited, 2,
+        "背压等待超时的 2 帧应被丢弃并回 rate_limited"
+    );
     relay.shutdown().await;
 }
 
@@ -849,8 +878,8 @@ async fn default_rate_limit_handles_64kib_chunk_stream() {
     let received = reader.await.expect("读取任务不应 panic");
     let elapsed = started.elapsed();
     assert_eq!(received, frames, "默认配置下 64KiB 分块不应丢帧");
-    let mib_per_sec = (frames as f64 * chunk.len() as f64) / 1024.0 / 1024.0
-        / elapsed.as_secs_f64().max(0.001);
+    let mib_per_sec =
+        (frames as f64 * chunk.len() as f64) / 1024.0 / 1024.0 / elapsed.as_secs_f64().max(0.001);
     // debug 构建下给宽松下限（release 实测远高于此）；绝对 >20MB/s 目标由
     // `default_rate_limit_meets_large_file_throughput_target` 单测按容量推导保证。
     assert!(
@@ -1248,4 +1277,342 @@ async fn vault_rejects_path_traversal_object_id() {
         assert!(message.contains("protocol_error"), "message: {message}");
     }
     relay.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// 撤销通知离线信箱（revocation mailbox）
+// ---------------------------------------------------------------------------
+
+fn revocation_notice(from: &Identity, to: &str, reason: &str) -> RevocationNotice {
+    create_revocation(from, to, reason).expect("创建撤销通知")
+}
+
+async fn put_revocation(client: &mut Client, notice: RevocationNotice) -> ServerToClient {
+    client.send(&ClientToServer::RevocationPut { notice }).await;
+    client
+        .recv_until(|message| matches!(message, ServerToClient::RevocationPutResult { .. }))
+        .await
+}
+
+fn assert_put_ok(result: ServerToClient, expected_id: &str) {
+    match result {
+        ServerToClient::RevocationPutResult {
+            ok,
+            notice_id,
+            message,
+        } => {
+            assert!(ok, "撤销通知 put 失败: {message}");
+            assert_eq!(notice_id, expected_id);
+        }
+        other => panic!("期望 RevocationPutResult，收到 {other:?}"),
+    }
+}
+
+fn assert_put_failed(result: ServerToClient, expected_code: &str) {
+    match result {
+        ServerToClient::RevocationPutResult { ok, message, .. } => {
+            assert!(!ok, "撤销通知 put 应失败却成功了");
+            assert!(
+                message.contains(expected_code),
+                "message 应包含 {expected_code}: {message}"
+            );
+        }
+        other => panic!("期望 RevocationPutResult，收到 {other:?}"),
+    }
+}
+
+async fn put_revocation_expect_ok(client: &mut Client, notice: RevocationNotice) -> String {
+    let notice_id = notice.notice_id().to_string();
+    assert_put_ok(put_revocation(client, notice).await, &notice_id);
+    notice_id
+}
+
+async fn recv_pending(client: &mut Client) -> Vec<RevocationNotice> {
+    match client
+        .recv_until(|message| matches!(message, ServerToClient::PendingRevocations { .. }))
+        .await
+    {
+        ServerToClient::PendingRevocations { notices } => notices,
+        _ => unreachable!(),
+    }
+}
+
+async fn expect_no_pending(client: &mut Client, wait: Duration) {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        match next_event(&mut client.ws, remaining).await {
+            Event::Message(ServerToClient::PendingRevocations { notices }) => {
+                panic!("不应收到 pending 撤销通知，却收到 {} 条", notices.len())
+            }
+            Event::Message(_) => continue,
+            Event::Closed => return,
+            Event::Timeout => return,
+        }
+    }
+}
+
+/// 让本连接已发送的帧被服务端处理完（同连接 FIFO：收到 Pong 说明前面的帧已处理）。
+async fn flush_client(client: &mut Client) {
+    client.send(&ClientToServer::Ping { ts_ms: now_ms() }).await;
+    client
+        .recv_until(|message| matches!(message, ServerToClient::Pong { .. }))
+        .await;
+}
+
+fn revocation_index_path(data_dir: &std::path::Path) -> PathBuf {
+    data_dir.join("revocations").join("index.json")
+}
+
+#[tokio::test]
+async fn revocation_offline_mailbox_persists_until_ack() {
+    let data_dir = test_data_dir("revocation-offline");
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut alice = Client::connect(relay.addr).await;
+    let bob_identity = Identity::generate("离线设备");
+    let notice = revocation_notice(
+        &alice.identity,
+        &bob_identity.device_id(),
+        revocation_reason::USER_REMOVED,
+    );
+    let notice_id = notice.notice_id().to_string();
+    assert_put_ok(put_revocation(&mut alice, notice).await, &notice_id);
+    let alice_id = alice.device_id.clone();
+    relay.shutdown().await;
+
+    // 重启中继（离线信箱持久化）后 Bob 首次上线：应立即收到 pending。
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut bob = Client::connect_with(relay.addr, bob_identity.clone()).await;
+    let pending = recv_pending(&mut bob).await;
+    assert_eq!(pending.len(), 1, "应收到 1 条积压撤销通知");
+    assert_eq!(pending[0].notice_id(), notice_id);
+    assert_eq!(pending[0].content.from, alice_id);
+    assert_eq!(pending[0].content.to, bob_identity.device_id());
+
+    // ack 后从索引删除。
+    bob.send(&ClientToServer::RevocationAck {
+        notice_id: notice_id.clone(),
+    })
+    .await;
+    flush_client(&mut bob).await;
+    relay.shutdown().await;
+    let index = std::fs::read_to_string(revocation_index_path(&data_dir)).expect("索引应落盘");
+    assert!(!index.contains(&notice_id), "ack 后索引不应再包含该通知");
+
+    // 再次上线不再收到 pending（幂等投递已确认删除）。
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut bob = Client::connect_with(relay.addr, bob_identity.clone()).await;
+    expect_no_pending(&mut bob, Duration::from_millis(400)).await;
+    relay.shutdown().await;
+}
+
+#[tokio::test]
+async fn revocation_online_target_receives_immediately_and_retries_until_ack() {
+    let data_dir = test_data_dir("revocation-online");
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut alice = Client::connect(relay.addr).await;
+    let bob_identity = Identity::generate("在线设备");
+    let mut bob = Client::connect_with(relay.addr, bob_identity.clone()).await;
+    let notice = revocation_notice(
+        &alice.identity,
+        &bob_identity.device_id(),
+        revocation_reason::INACTIVE_90D,
+    );
+    let notice_id = notice.notice_id().to_string();
+    assert_put_ok(put_revocation(&mut alice, notice).await, &notice_id);
+
+    // 目标在线：无需重连即可收到。
+    let pending = recv_pending(&mut bob).await;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].notice_id(), notice_id);
+
+    // 未 ack 就断开：重新上线应再次收到（投递幂等、ack 前持久保留）。
+    bob.close().await;
+    let mut bob = Client::connect_with(relay.addr, bob_identity.clone()).await;
+    let pending = recv_pending(&mut bob).await;
+    assert_eq!(pending[0].notice_id(), notice_id);
+
+    bob.send(&ClientToServer::RevocationAck {
+        notice_id: notice_id.clone(),
+    })
+    .await;
+    flush_client(&mut bob).await;
+    relay.shutdown().await;
+    let index = std::fs::read_to_string(revocation_index_path(&data_dir)).expect("索引应落盘");
+    assert!(!index.contains(&notice_id));
+}
+
+#[tokio::test]
+async fn revocation_ack_from_other_device_does_not_delete() {
+    let data_dir = test_data_dir("revocation-wrong-ack");
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut alice = Client::connect(relay.addr).await;
+    let mut mallory = Client::connect(relay.addr).await;
+    let bob_identity = Identity::generate("bob");
+    let notice = revocation_notice(
+        &alice.identity,
+        &bob_identity.device_id(),
+        revocation_reason::USER_REMOVED,
+    );
+    let notice_id = notice.notice_id().to_string();
+    assert_put_ok(put_revocation(&mut alice, notice).await, &notice_id);
+
+    // 非目标设备的 ack 不应删除通知。
+    mallory
+        .send(&ClientToServer::RevocationAck {
+            notice_id: notice_id.clone(),
+        })
+        .await;
+    flush_client(&mut mallory).await;
+    relay.shutdown().await;
+
+    // Bob 上线仍应收到。
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut bob = Client::connect_with(relay.addr, bob_identity.clone()).await;
+    let pending = recv_pending(&mut bob).await;
+    assert_eq!(pending[0].notice_id(), notice_id);
+    relay.shutdown().await;
+}
+
+#[tokio::test]
+async fn revocation_rejects_forged_expired_oversized_and_wrong_sender() {
+    let relay = spawn_relay().await;
+    let mut alice = Client::connect(relay.addr).await;
+    let mut mallory = Client::connect(relay.addr).await;
+    let bob_identity = Identity::generate("bob");
+    let bob_id = bob_identity.device_id();
+
+    // 1) 通知由第三方签名、却由 alice 发送：from 与连接设备不一致。
+    let forged = revocation_notice(&mallory.identity, &bob_id, revocation_reason::USER_REMOVED);
+    assert_put_failed(
+        put_revocation(&mut alice, forged).await,
+        "revocation_invalid",
+    );
+
+    // 2) 签名被篡改。
+    let mut tampered = revocation_notice(&alice.identity, &bob_id, revocation_reason::USER_REMOVED);
+    tampered.signature[0] ^= 1;
+    assert_put_failed(
+        put_revocation(&mut alice, tampered).await,
+        "revocation_invalid",
+    );
+
+    // 3) 合法通知但由非签名方发送。
+    let valid = revocation_notice(&alice.identity, &bob_id, revocation_reason::USER_REMOVED);
+    assert_put_failed(
+        put_revocation(&mut mallory, valid).await,
+        "revocation_invalid",
+    );
+
+    // 4) 撤销目标是自己。
+    let mut self_target =
+        revocation_notice(&alice.identity, &bob_id, revocation_reason::USER_REMOVED);
+    self_target.content.to = alice.device_id.clone();
+    assert_put_failed(
+        put_revocation(&mut alice, self_target).await,
+        "revocation_invalid",
+    );
+
+    // 5) 已过期（创建时间早于 90 天 TTL）。
+    let expired_at = now_ms().saturating_sub(REVOCATION_TTL_SECS * 1000 + 1000);
+    let expired = RevocationNotice::create(
+        &alice.identity,
+        &bob_id,
+        revocation_reason::USER_REMOVED,
+        expired_at,
+    )
+    .expect("创建过期通知");
+    assert_put_failed(
+        put_revocation(&mut alice, expired).await,
+        "revocation_invalid",
+    );
+
+    // 6) 单条序列化超过 8 KiB。
+    let huge_reason = "x".repeat(9000);
+    let oversized = revocation_notice(&alice.identity, &bob_id, &huge_reason);
+    assert_put_failed(
+        put_revocation(&mut alice, oversized).await,
+        "payload_too_large",
+    );
+
+    relay.shutdown().await;
+}
+
+#[tokio::test]
+async fn revocation_quota_limits_reject() {
+    let relay = spawn_relay_with(|config| {
+        config.revocation_max_per_sender = 2;
+        config.revocation_max_total = 3;
+    })
+    .await;
+    let mut alice = Client::connect(relay.addr).await;
+    let mut bob = Client::connect(relay.addr).await;
+    let mut carol = Client::connect(relay.addr).await;
+    let dave = Client::connect(relay.addr).await;
+    let bob_id = bob.device_id.clone();
+    let carol_id = carol.device_id.clone();
+    let dave_id = dave.device_id.clone();
+
+    // 单发送方上限：alice 前 2 条成功，第 3 条被拒。
+    let alice_to_bob = revocation_notice(&alice.identity, &bob_id, revocation_reason::USER_REMOVED);
+    put_revocation_expect_ok(&mut alice, alice_to_bob).await;
+    let alice_to_carol =
+        revocation_notice(&alice.identity, &carol_id, revocation_reason::USER_REMOVED);
+    put_revocation_expect_ok(&mut alice, alice_to_carol).await;
+    let alice_to_dave =
+        revocation_notice(&alice.identity, &dave_id, revocation_reason::USER_REMOVED);
+    assert_put_failed(
+        put_revocation(&mut alice, alice_to_dave).await,
+        "revocation_quota_exceeded",
+    );
+
+    // 全局上限：当前 2 条，bob 再发 1 条后达到 3 条上限；carol 再发被拒。
+    let bob_to_carol = revocation_notice(&bob.identity, &carol_id, revocation_reason::USER_REMOVED);
+    put_revocation_expect_ok(&mut bob, bob_to_carol).await;
+    let carol_to_dave =
+        revocation_notice(&carol.identity, &dave_id, revocation_reason::USER_REMOVED);
+    assert_put_failed(
+        put_revocation(&mut carol, carol_to_dave).await,
+        "revocation_quota_exceeded",
+    );
+
+    relay.shutdown().await;
+}
+
+#[tokio::test]
+async fn revocation_startup_cleanup_removes_expired() {
+    let data_dir = test_data_dir("revocation-expired");
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut alice = Client::connect(relay.addr).await;
+    let bob_identity = Identity::generate("bob");
+    let notice = revocation_notice(
+        &alice.identity,
+        &bob_identity.device_id(),
+        revocation_reason::USER_REMOVED,
+    );
+    let notice_id = put_revocation_expect_ok(&mut alice, notice).await;
+    relay.shutdown().await;
+
+    // 白盒拨快时间：把索引里的到期时间改到过去（验签只在写入时发生）。
+    let index_path = revocation_index_path(&data_dir);
+    let mut index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&index_path).expect("读取索引"))
+            .expect("解析索引");
+    index[0]["notice"]["content"]["expires_at_ms"] = serde_json::json!(now_ms().saturating_sub(1));
+    std::fs::write(
+        &index_path,
+        serde_json::to_vec_pretty(&index).expect("序列化索引"),
+    )
+    .expect("写回索引");
+
+    // 重启后启动清理应删除过期通知。
+    let relay = spawn_relay_with(|config| config.data_dir = data_dir.clone()).await;
+    let mut bob = Client::connect_with(relay.addr, bob_identity.clone()).await;
+    expect_no_pending(&mut bob, Duration::from_millis(500)).await;
+    relay.shutdown().await;
+    let raw = std::fs::read_to_string(&index_path).expect("索引存在");
+    assert!(!raw.contains(&notice_id), "启动清理应删除过期通知");
 }

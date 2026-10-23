@@ -9,3 +9,8 @@ Cargo.lock.bak
 /.drive-sync
 # 项目本地 CARGO_HOME（见 scripts/cargo.ps1）
 /.cargo-home
+# 本地自动更新签名私钥种子（绝不提交；CI 用 secrets.UPDATE_SIGNING_KEY）
+/update-signing-key.local
+*.signing-key.local
+# 中继控制面状态（撤销信箱）
+/drive-relay-state

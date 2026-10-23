@@ -1,4 +1,4 @@
-﻿//! 本地数据目录持久化。
+//! 本地数据目录持久化。
 //!
 //! 目录布局（见 docs/protocol.md §8.1）：
 //!
@@ -28,6 +28,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use drive_core::catalog::Catalog;
 use drive_core::identity::{Identity, IdentityFile, PublicIdentity};
 use drive_core::pairing::PairRecord;
+use drive_core::revocation::RevocationNotice;
 use drive_core::vault::VaultMeta;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -189,6 +190,15 @@ struct VaultKeysFile {
     keys: Vec<VaultKey>,
 }
 
+/// 本地待投递的解除配对通知（离线撤销信箱）。
+#[derive(Serialize, Deserialize, Default)]
+struct PendingRevocationsFile {
+    #[serde(default = "default_store_version")]
+    v: u32,
+    #[serde(default)]
+    notices: Vec<RevocationNotice>,
+}
+
 /// 本地存储句柄（可在线程间共享；内部写锁串行化）。
 pub struct Store {
     data_dir: PathBuf,
@@ -208,8 +218,7 @@ impl Store {
             tmp_counter: AtomicU64::new(0),
         };
         for dir in [store.spool_dir(), store.incoming_dir(), store.logs_dir()] {
-            fs::create_dir_all(&dir)
-                .with_context(|| format!("创建目录失败: {}", dir.display()))?;
+            fs::create_dir_all(&dir).with_context(|| format!("创建目录失败: {}", dir.display()))?;
         }
         Ok(store)
     }
@@ -235,6 +244,10 @@ impl Store {
     }
     pub fn vault_keys_path(&self) -> PathBuf {
         self.data_dir.join("vault_keys.json")
+    }
+    /// 待投递的解除配对通知队列（离线撤销用）。
+    pub fn pending_revocations_path(&self) -> PathBuf {
+        self.data_dir.join("pending_revocations.json")
     }
     pub fn spool_dir(&self) -> PathBuf {
         self.data_dir.join("spool")
@@ -263,8 +276,8 @@ impl Store {
     pub fn load_or_create_identity(&self, name: &str) -> Result<(Identity, bool)> {
         let path = self.identity_path();
         if path.exists() {
-            let raw = fs::read(&path)
-                .with_context(|| format!("读取身份文件失败: {}", path.display()))?;
+            let raw =
+                fs::read(&path).with_context(|| format!("读取身份文件失败: {}", path.display()))?;
             let file: IdentityFile = serde_json::from_slice(&raw)
                 .with_context(|| format!("解析身份文件失败: {}", path.display()))?;
             let identity = Identity::from_file(file).context("身份文件内容非法")?;
@@ -285,7 +298,8 @@ impl Store {
                 path.display()
             );
         }
-        let raw = fs::read(&path).with_context(|| format!("读取身份文件失败: {}", path.display()))?;
+        let raw =
+            fs::read(&path).with_context(|| format!("读取身份文件失败: {}", path.display()))?;
         let file: IdentityFile = serde_json::from_slice(&raw)
             .with_context(|| format!("解析身份文件失败: {}", path.display()))?;
         Identity::from_file(file).context("身份文件内容非法")
@@ -367,6 +381,56 @@ impl Store {
             .load_peers()?
             .into_iter()
             .find(|p| p.peer.device_id == device_id))
+    }
+
+    // ------------------------------------------------------------------
+    // 待投递的解除配对通知（离线撤销信箱）
+    // ------------------------------------------------------------------
+
+    /// 读取本地待投递通知（非破坏性；投递成功后再用 [`Store::ack_revocation`] 删除）。
+    ///
+    /// 命名沿用接口约定 `take_pending_revocations`：调用方拿到列表后负责逐条确认。
+    pub fn take_pending_revocations(&self) -> Result<Vec<RevocationNotice>> {
+        let file =
+            self.read_json_opt::<PendingRevocationsFile>(&self.pending_revocations_path())?;
+        Ok(file.map(|f| f.notices).unwrap_or_default())
+    }
+
+    /// 把一条签名通知加入本地待发队列（按 `notice_id` 去重）。
+    ///
+    /// 重复投递同一目标/原因的通知由上层去重；这里只保证 notice_id 不重复写入。
+    pub fn queue_revocation(&self, notice: &RevocationNotice) -> Result<()> {
+        let mut notices = self.take_pending_revocations()?;
+        let notice_id = notice.notice_id();
+        match notices
+            .iter_mut()
+            .find(|existing| existing.notice_id() == notice_id)
+        {
+            Some(slot) => *slot = notice.clone(),
+            None => notices.push(notice.clone()),
+        }
+        let file = PendingRevocationsFile {
+            v: STORE_VERSION,
+            notices,
+        };
+        self.write_json_atomic(&self.pending_revocations_path(), &file)
+    }
+
+    /// 通知已投递/已过期：从队列删除。返回是否确实删除。
+    pub fn ack_revocation(&self, notice_id: &str) -> Result<bool> {
+        let mut notices = self.take_pending_revocations()?;
+        let before = notices.len();
+        notices.retain(|notice| notice.notice_id() != notice_id);
+        if notices.len() != before {
+            let file = PendingRevocationsFile {
+                v: STORE_VERSION,
+                notices,
+            };
+            self.write_json_atomic(&self.pending_revocations_path(), &file)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -454,7 +518,9 @@ impl Store {
     // ------------------------------------------------------------------
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.write_lock.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.write_lock
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     fn temp_path(&self, path: &Path) -> PathBuf {
@@ -463,10 +529,7 @@ impl Store {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "data".to_string());
-        path.with_file_name(format!(
-            ".{file_name}.tmp-{}-{n}",
-            std::process::id()
-        ))
+        path.with_file_name(format!(".{file_name}.tmp-{}-{n}", std::process::id()))
     }
 
     fn replace_file(&self, tmp: &Path, path: &Path) -> Result<()> {
@@ -505,19 +568,17 @@ impl Store {
     fn read_json_opt<T: DeserializeOwned>(&self, path: &Path) -> Result<Option<T>> {
         match fs::read(path) {
             Ok(bytes) => {
+                // 容忍外部编辑器写入的 UTF-8 BOM。
+                let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
                 if bytes.iter().all(|b| b.is_ascii_whitespace()) {
                     return Ok(None);
                 }
-                let value = serde_json::from_slice(&bytes)
+                let value = serde_json::from_slice(bytes)
                     .with_context(|| format!("解析 {} 失败", path.display()))?;
                 Ok(Some(value))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(anyhow!(
-                "读取 {} 失败: {}",
-                path.display(),
-                e
-            )),
+            Err(e) => Err(anyhow!("读取 {} 失败: {}", path.display(), e)),
         }
     }
 }
@@ -595,6 +656,7 @@ mod tests {
             paired_at_ms: 1_700_000_000_000,
             label: label.to_string(),
             pairing_fingerprint: "0123456789abcdef".into(),
+            last_seen_ms: 1_700_000_000_000,
         }
     }
 
@@ -672,5 +734,43 @@ mod tests {
             .remove_peer(&identity_a.device_id())
             .expect("第二次删除"));
         assert_eq!(store.load_peers().expect("读取 peers").len(), 1);
+    }
+
+    #[test]
+    fn pending_revocation_queue_persists_dedups_and_acks() {
+        use drive_core::revocation::reason;
+        let dir = TempDir::new().expect("临时目录");
+        let identity_a = Identity::generate("设备A");
+        let identity_b = Identity::generate("设备B");
+        let notice = RevocationNotice::create(
+            &identity_a,
+            &identity_b.device_id(),
+            reason::USER_REMOVED,
+            1_000,
+        )
+        .expect("创建撤销通知");
+        let notice_id = notice.notice_id().to_string();
+
+        {
+            let store = Store::open(dir.path()).expect("打开 store");
+            store.queue_revocation(&notice).expect("入队");
+            // 重复入队同一 notice_id 不应产生重复条目。
+            store.queue_revocation(&notice).expect("重复入队");
+        }
+
+        // 进程重启后队列仍在（离线撤销可跨重启重试）。
+        let store = Store::open(dir.path()).expect("重开 store");
+        let pending = store.take_pending_revocations().expect("读取队列");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].notice_id(), notice_id);
+        assert_eq!(pending[0].content.to, identity_b.device_id());
+
+        assert!(store.ack_revocation(&notice_id).expect("ack"));
+        assert!(store
+            .take_pending_revocations()
+            .expect("读取队列")
+            .is_empty());
+        // ack 幂等。
+        assert!(!store.ack_revocation(&notice_id).expect("重复 ack"));
     }
 }

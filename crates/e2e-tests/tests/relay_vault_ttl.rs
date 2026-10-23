@@ -1,4 +1,4 @@
-﻿//! 中继可选加密暂存（vault）的端到端语义测试。
+//! 中继可选加密暂存（vault）的端到端语义测试。
 //!
 //! 全部通过**真实 WebSocket 客户端 → 进程内中继**验证协议行为，不直接调用中继内部 API。
 //!
@@ -22,9 +22,7 @@ use drive_core::identity::Identity;
 use drive_core::util::{blake3_hex, now_ms};
 use drive_core::vault::{VaultMeta, MIN_VAULT_TTL_SECS};
 use drive_core::wire::{ClientToServer, ServerToClient};
-use drive_e2e::harness::{
-    relay_config, start_relay, RelayClient, DEFAULT_TIMEOUT, DEFAULT_TOKEN,
-};
+use drive_e2e::harness::{relay_config, start_relay, RelayClient, DEFAULT_TIMEOUT, DEFAULT_TOKEN};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -309,7 +307,10 @@ async fn vault_put_get_delete_and_ttl_is_clamped() -> Result<()> {
     // 显式删除 → 立即不可读且文件被删除。
     let delete_result = delete(&mut client, object_id).await?;
     assert!(delete_result.ok, "删除应成功: {}", delete_result.message);
-    assert!(!object_file(dir.path(), object_id).exists(), "删除后文件应消失");
+    assert!(
+        !object_file(dir.path(), object_id).exists(),
+        "删除后文件应消失"
+    );
     let get_after_delete = get(&mut client, object_id).await?;
     assert!(!get_after_delete.ok, "删除后读取必须失败");
     assert!(
@@ -421,7 +422,11 @@ async fn vault_get_is_shared_by_object_id_but_delete_is_owner_only() -> Result<(
 
     // B 凭 object_id 拉取密文（真实客户端会通过 E2E vault_share 收到解密密钥）。
     let bob_get = get(&mut bob, object_id).await?;
-    assert!(bob_get.ok, "B 应能凭 object_id 拉取密文: {}", bob_get.message);
+    assert!(
+        bob_get.ok,
+        "B 应能凭 object_id 拉取密文: {}",
+        bob_get.message
+    );
     assert_eq!(bob_get.ciphertext.as_deref(), Some(ciphertext.as_slice()));
 
     // 但只有上传者能删除。
@@ -435,7 +440,11 @@ async fn vault_get_is_shared_by_object_id_but_delete_is_owner_only() -> Result<(
     assert!(object_file(dir.path(), object_id).exists());
 
     let alice_delete = delete(&mut alice, object_id).await?;
-    assert!(alice_delete.ok, "上传者删除应成功: {}", alice_delete.message);
+    assert!(
+        alice_delete.ok,
+        "上传者删除应成功: {}",
+        alice_delete.message
+    );
     assert!(!object_file(dir.path(), object_id).exists());
     let alice_get = get(&mut alice, object_id).await?;
     assert!(!alice_get.ok, "删除后不可读");

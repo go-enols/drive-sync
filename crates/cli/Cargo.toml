@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "drive-cli"
 version.workspace = true
 edition.workspace = true
@@ -17,6 +17,7 @@ tls = ["drive-client/tls"]
 [dependencies]
 drive-core = { workspace = true }
 drive-client = { workspace = true }
+drive-updater = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 clap = { workspace = true }

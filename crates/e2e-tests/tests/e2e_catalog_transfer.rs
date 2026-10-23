@@ -1,4 +1,4 @@
-﻿//! 阶段 2 端到端：目录快照/增量/墓碑 + have_list + 文件传输 BLAKE3 校验。
+//! 阶段 2 端到端：目录快照/增量/墓碑 + have_list + 文件传输 BLAKE3 校验。
 //!
 //! 流程：
 //! 1. A 先上线并在 B 离线时 `catalog add`（模拟本地已有目录）；
@@ -30,7 +30,8 @@ async fn catalog_snapshot_delta_tombstone_and_fetch_with_blake3() -> Result<()> 
     let dir_b = root.path().join("device-b");
     let files = root.path().join("files");
 
-    let (pair_a, pair_b) = pair_nodes(&dir_a, &dir_b, "目录A", "目录B", &url, DEFAULT_TOKEN).await?;
+    let (pair_a, pair_b) =
+        pair_nodes(&dir_a, &dir_b, "目录A", "目录B", &url, DEFAULT_TOKEN).await?;
     let file_snapshot = write_random_file(&files, "installer-snapshot.bin", TRANSFER_SIZE)?;
     let snapshot_hash = file_blake3(&file_snapshot)?;
 
@@ -99,7 +100,11 @@ async fn catalog_snapshot_delta_tombstone_and_fetch_with_blake3() -> Result<()> 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let tombstone = b.catalog_entry(&entry_snapshot)?;
-        if tombstone.as_ref().map(|entry| entry.deleted).unwrap_or(false) {
+        if tombstone
+            .as_ref()
+            .map(|entry| entry.deleted)
+            .unwrap_or(false)
+        {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -142,7 +147,8 @@ async fn wait_catalog_entry(node: &ClientNode, entry_id: &str, timeout: Duration
     }
 }
 
-fn assert_file_equals(received: &Path, original: &Path, expected_hash: &str) -> Result<()> {    let actual_hash = file_blake3(received)?;
+fn assert_file_equals(received: &Path, original: &Path, expected_hash: &str) -> Result<()> {
+    let actual_hash = file_blake3(received)?;
     if actual_hash != expected_hash {
         bail!(
             "接收文件 BLAKE3 不匹配: {}（{}） vs {}（{}）",

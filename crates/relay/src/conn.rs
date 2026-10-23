@@ -1,4 +1,4 @@
-﻿//! 单条 WebSocket 连接：hello 认证、welcome/presence、消息路由、限速与空闲超时。
+//! 单条 WebSocket 连接：hello 认证、welcome/presence、消息路由、限速与空闲超时。
 //!
 //! 每条连接 = 一个读任务（本模块 `run_connection`）+ 一个写任务（writer）。
 //! 业务消息只做转发：`session_init` / `session_ack` / `relay`；中继不解析、不记录 ciphertext。
@@ -10,6 +10,8 @@ use std::time::Duration;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
+use drive_core::identity::PublicIdentity;
+use drive_core::revocation::RevocationNotice;
 use drive_core::util::{now_ms, random_hex};
 use drive_core::vault::VaultMeta;
 use drive_core::wire::{ClientToServer, ServerToClient, WIRE_VERSION};
@@ -21,6 +23,7 @@ use tracing::{debug, info, warn};
 use crate::auth;
 use crate::pair;
 use crate::ratelimit::TokenBucket;
+use crate::revocation::{self, AckOutcome};
 use crate::state::{try_send_close, try_send_error, try_send_json, OutMsg, PeerConn, RelayState};
 
 // 应用自定义关闭码（RFC 6455 4000-4999 区间）+ 标准 1001 关停码。
@@ -118,6 +121,26 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<RelayState>) {
         state.unregister_peer(&device_id, &session_id).await;
         return;
     }
+
+    // 登录后推送离线期间积压的解除配对通知（welcome 之后的第一批业务消息；
+    // 投递不改变存储状态，ack 前每次登录都会重推，保证幂等可达）。
+    let pending_revocations = state.revocations.pending_for(&device_id).await;
+    if !pending_revocations.is_empty() {
+        debug!(
+            device = %device_id,
+            count = pending_revocations.len(),
+            "推送待处理解除配对通知"
+        );
+        if !try_send_json(
+            &out_tx,
+            ServerToClient::PendingRevocations {
+                notices: pending_revocations,
+            },
+        ) {
+            warn!(device = %device_id, "推送解除配对通知失败，待下次登录重试");
+        }
+    }
+
     info!(device = %device_id, "设备已认证上线");
     state.broadcast_presence().await;
 
@@ -150,7 +173,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<RelayState>) {
 
     let close_reason = run_connection(
         &state,
-        &device_id,
+        &device,
         &out_tx,
         &mut kick_rx,
         &mut shutdown_rx,
@@ -261,18 +284,22 @@ async fn next_frame(stream: &mut SplitStream<WebSocket>, idle: Option<Duration>)
 
 async fn run_connection(
     state: &Arc<RelayState>,
-    device_id: &str,
+    device: &PublicIdentity,
     out_tx: &mpsc::Sender<OutMsg>,
     kick_rx: &mut watch::Receiver<bool>,
     shutdown_rx: &mut watch::Receiver<bool>,
     stream: &mut SplitStream<WebSocket>,
 ) -> &'static str {
+    let device_id = device.device_id.as_str();
     let idle = if state.config.idle_timeout_secs == 0 {
         None
     } else {
         Some(Duration::from_secs(state.config.idle_timeout_secs))
     };
-    let mut bucket = TokenBucket::new(state.config.rate_limit_per_sec, state.config.rate_limit_burst);
+    let mut bucket = TokenBucket::new(
+        state.config.rate_limit_per_sec,
+        state.config.rate_limit_burst,
+    );
 
     // 注册时中继可能已进入关停流程（watch 只在值变化时通知，故先检查当前值）。
     if *shutdown_rx.borrow() {
@@ -320,8 +347,7 @@ async fn run_connection(
                 // 每连接令牌桶限速（背压优先：不足时暂停本连接读循环等待补令牌，
                 // 通过 TCP 窗口自然减速发送端，不丢帧；等待超时才回 rate_limited）。
                 if let Some(bucket) = bucket.as_mut() {
-                    let max_wait =
-                        Duration::from_millis(state.config.rate_limit_max_wait_ms);
+                    let max_wait = Duration::from_millis(state.config.rate_limit_max_wait_ms);
                     // 背压等待期间也要能被“踢旧连接 / 中继关停”立即打断。
                     let acquired = tokio::select! {
                         biased;
@@ -354,13 +380,14 @@ async fn run_connection(
                     Ok(message) => message,
                     Err(error) => {
                         debug!(device = %device_id, %error, "客户端消息解析失败");
-                        let _ = try_send_error(out_tx, "protocol_error", "消息不是合法的 JSON 协议帧");
+                        let _ =
+                            try_send_error(out_tx, "protocol_error", "消息不是合法的 JSON 协议帧");
                         let _ = try_send_close(out_tx, CLOSE_PROTOCOL_ERROR, "invalid json");
                         return "invalid_json";
                     }
                 };
 
-                match handle_client_message(state, device_id, out_tx, message).await {
+                match handle_client_message(state, device, out_tx, message).await {
                     MsgFlow::Continue => {}
                     MsgFlow::Close(reason) => {
                         let _ = try_send_close(out_tx, CLOSE_PROTOCOL_ERROR, reason);
@@ -399,13 +426,18 @@ enum MsgFlow {
 
 async fn handle_client_message(
     state: &Arc<RelayState>,
-    device_id: &str,
+    device: &PublicIdentity,
     out_tx: &mpsc::Sender<OutMsg>,
     message: ClientToServer,
 ) -> MsgFlow {
+    let device_id = device.device_id.as_str();
     match message {
         ClientToServer::Hello { .. } => {
-            let _ = try_send_error(out_tx, "protocol_error", "连接已完成认证，不能重复发送 hello");
+            let _ = try_send_error(
+                out_tx,
+                "protocol_error",
+                "连接已完成认证，不能重复发送 hello",
+            );
             MsgFlow::Close("duplicate hello")
         }
         ClientToServer::Ping { ts_ms } => {
@@ -473,7 +505,10 @@ async fn handle_client_message(
             ciphertext,
             ttl_secs,
         } => {
-            handle_vault_put(state, device_id, out_tx, object_id, meta, ciphertext, ttl_secs).await;
+            handle_vault_put(
+                state, device_id, out_tx, object_id, meta, ciphertext, ttl_secs,
+            )
+            .await;
             MsgFlow::Continue
         }
         ClientToServer::VaultGet { object_id } => {
@@ -486,6 +521,14 @@ async fn handle_client_message(
         }
         ClientToServer::VaultDelete { object_id } => {
             handle_vault_delete(state, device_id, out_tx, object_id).await;
+            MsgFlow::Continue
+        }
+        ClientToServer::RevocationPut { notice } => {
+            handle_revocation_put(state, device, out_tx, notice).await;
+            MsgFlow::Continue
+        }
+        ClientToServer::RevocationAck { notice_id } => {
+            handle_revocation_ack(state, device, notice_id).await;
             MsgFlow::Continue
         }
     }
@@ -687,4 +730,109 @@ async fn handle_vault_delete(
             message,
         },
     );
+}
+
+// ---------------------------------------------------------------------------
+// 离线解除配对通知信箱
+// ---------------------------------------------------------------------------
+
+/// `revocation_put`：验签 + 限额 + 落盘；目标在线时立即推送（仍保留到 ack/TTL）。
+async fn handle_revocation_put(
+    state: &Arc<RelayState>,
+    device: &PublicIdentity,
+    out_tx: &mpsc::Sender<OutMsg>,
+    notice: RevocationNotice,
+) {
+    let notice_id = notice.notice_id().to_string();
+    let id_prefix = revocation::short_id(&notice_id);
+    match state.revocations.put(device, notice).await {
+        Ok(outcome) => {
+            let target = outcome.notice.content.to.clone();
+            if outcome.duplicate {
+                debug!(
+                    device = %device.device_id,
+                    notice_id = %id_prefix,
+                    "收到重复的撤销通知（幂等，不重复入信箱）"
+                );
+            } else {
+                debug!(
+                    device = %device.device_id,
+                    target = %target,
+                    notice_id = %id_prefix,
+                    "撤销通知已入离线信箱"
+                );
+            }
+            // 目标在线 → 立即推送；推送失败不影响存储（下次登录会重推）。
+            if let Some(peer) = state.peer(&target).await {
+                let pushed = ServerToClient::PendingRevocations {
+                    notices: vec![outcome.notice.clone()],
+                };
+                match peer.tx.try_send(OutMsg::Json(pushed)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        warn!(
+                            notice_id = %id_prefix,
+                            "目标设备发送队列已满，撤销通知待其下次登录重推"
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        state
+                            .unregister_peer(&peer.device_id, &peer.session_id)
+                            .await;
+                    }
+                }
+            }
+            let message = if outcome.duplicate {
+                "duplicate"
+            } else {
+                "queued"
+            };
+            let _ = try_send_json(
+                out_tx,
+                ServerToClient::RevocationPutResult {
+                    ok: true,
+                    notice_id,
+                    message: message.to_string(),
+                },
+            );
+        }
+        Err(error) => {
+            debug!(
+                device = %device.device_id,
+                notice_id = %id_prefix,
+                code = error.code,
+                "撤销通知被拒绝"
+            );
+            let _ = try_send_json(
+                out_tx,
+                ServerToClient::RevocationPutResult {
+                    ok: false,
+                    notice_id,
+                    message: error.display_message(),
+                },
+            );
+        }
+    }
+}
+
+/// `revocation_ack`：只允许删除 `to == 自己` 的通知（无线上响应，重复 ack 幂等）。
+async fn handle_revocation_ack(
+    state: &Arc<RelayState>,
+    device: &PublicIdentity,
+    notice_id: String,
+) {
+    let id_prefix = revocation::short_id(&notice_id);
+    match state.revocations.ack(&device.device_id, &notice_id).await {
+        AckOutcome::Removed => {}
+        AckOutcome::NotFound => {
+            debug!(device = %device.device_id, notice_id = %id_prefix, "撤销通知确认：不存在或已删除（幂等）");
+        }
+        AckOutcome::NotOwner => {
+            warn!(
+                device = %device.device_id,
+                notice_id = %id_prefix,
+                "忽略删除他人撤销通知的确认请求"
+            );
+        }
+    }
 }

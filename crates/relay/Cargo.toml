@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "drive-relay"
 version.workspace = true
 edition.workspace = true
@@ -31,3 +31,4 @@ tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 tempfile = "3"
 drive-core = { workspace = true }
+serde_json = { workspace = true }

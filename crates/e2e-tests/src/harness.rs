@@ -1,4 +1,4 @@
-﻿//! 端到端测试/基准共享基础设施。
+//! 端到端测试/基准共享基础设施。
 //!
 //! 设计目标：用**真实 WebSocket 客户端 + 真实中继**验证协议，而不是 mock：
 //! - [`start_relay`] / [`bench_relay_config`]：在 `127.0.0.1:0` 起进程内中继（随机端口）；
@@ -18,8 +18,8 @@ use drive_core::identity::{Identity, PublicIdentity};
 use drive_core::pairing::{PairRecord, PAIRING_VERSION};
 use drive_core::peer::PeerMessage;
 use drive_core::session::{
-    accept_session_init, complete_session, create_session_init, E2eEnvelope, Session, SessionAckMsg,
-    SessionInitMsg,
+    accept_session_init, complete_session, create_session_init, E2eEnvelope, Session,
+    SessionAckMsg, SessionInitMsg,
 };
 use drive_core::util::{blake3_hex, now_ms, random_hex};
 use drive_core::wire::{hello_sign_input, ClientToServer, ServerToClient, WIRE_VERSION};
@@ -43,12 +43,25 @@ pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 // ---------------------------------------------------------------------------
 
 /// 测试/基准通用中继配置：绑定 `127.0.0.1:0`、启用可选暂存（若给目录）。
+///
+/// 注意：v0.2 起 `RelayConfig.data_dir` 是撤销通知离线信箱（`<data_dir>/revocations/`）
+/// 的落盘位置。每个测试**必须**使用独立目录，否则会跨测试共享离线通知。本函数
+/// 默认分配一个唯一的系统临时目录；需要"中继重启后通知仍存在"的测试请用
+/// [`relay_config_with_data_dir`] 显式指定目录。
 pub fn relay_config(vault_dir: Option<PathBuf>) -> drive_relay::RelayConfig {
+    let data_dir = std::env::temp_dir().join(format!("drive-e2e-relay-state-{}", random_hex(8)));
+    relay_config_with_data_dir(vault_dir, data_dir)
+}
+
+/// 与 [`relay_config`] 相同，但显式指定中继状态目录（撤销通知持久化 / 重启复用）。
+pub fn relay_config_with_data_dir(
+    vault_dir: Option<PathBuf>,
+    data_dir: PathBuf,
+) -> drive_relay::RelayConfig {
     let mut config = drive_relay::RelayConfig::new(DEFAULT_TOKEN);
-    config.bind = "127.0.0.1:0"
-        .parse()
-        .expect("127.0.0.1:0 是合法监听地址");
+    config.bind = "127.0.0.1:0".parse().expect("127.0.0.1:0 是合法监听地址");
     config.vault_dir = vault_dir;
+    config.data_dir = data_dir;
     config
 }
 
@@ -68,19 +81,28 @@ pub fn bench_relay_config() -> drive_relay::RelayConfig {
 
 /// 启动进程内中继；返回时监听端口已就绪。
 pub async fn start_relay(config: drive_relay::RelayConfig) -> Result<drive_relay::RelayHandle> {
-    drive_relay::start(config).await.context("启动进程内中继失败")
+    drive_relay::start(config)
+        .await
+        .context("启动进程内中继失败")
 }
 
-/// 在**指定地址**重启中继（断线重连测试用）。
+/// 在**指定地址**重启中继（断线重连测试用）；状态目录使用新的临时目录。
 ///
 /// 旧中继 `shutdown().await` 后端口可能还没完全释放，这里带 50ms 间隔重试。
 /// 返回值与原中继相同的监听地址，客户端按固定 URL 自动重连。
-pub async fn restart_relay_on(
+pub async fn restart_relay_on(addr: std::net::SocketAddr) -> Result<drive_relay::RelayHandle> {
+    let data_dir = std::env::temp_dir().join(format!("drive-e2e-relay-state-{}", random_hex(8)));
+    restart_relay_on_with_data_dir(addr, data_dir).await
+}
+
+/// 在指定地址重启中继，并复用指定状态目录（撤销通知离线信箱持久化测试用）。
+pub async fn restart_relay_on_with_data_dir(
     addr: std::net::SocketAddr,
+    data_dir: PathBuf,
 ) -> Result<drive_relay::RelayHandle> {
     let mut last_error = None;
     for _ in 0..120 {
-        let mut config = relay_config(None);
+        let mut config = relay_config_with_data_dir(None, data_dir.clone());
         config.bind = addr;
         match drive_relay::start(config).await {
             Ok(handle) => return Ok(handle),
@@ -209,7 +231,7 @@ impl RelayClient {
                 Ok(None) => bail!("中继连接已关闭"),
                 Ok(Some(Err(error))) => bail!("WebSocket 连接错误: {error}"),
                 Ok(Some(Ok(Message::Text(text)))) => {
-                    return Ok(ServerToClient::from_json(&text).context("解析中继消息失败")?);
+                    return ServerToClient::from_json(&text).context("解析中继消息失败");
                 }
                 Ok(Some(Ok(Message::Ping(payload)))) => {
                     let _ = self.ws.send(Message::Pong(payload)).await;
@@ -293,22 +315,20 @@ pub fn pair_record(self_identity: &Identity, peer: &PublicIdentity, relay_url: &
         (peer.device_id.clone(), self_identity.device_id())
     };
     let fingerprint = blake3_hex(format!("{first}/{second}").as_bytes());
+    let now = now_ms();
     PairRecord {
         v: PAIRING_VERSION,
         peer: peer.clone(),
         relay_url: relay_url.to_string(),
-        paired_at_ms: now_ms(),
+        paired_at_ms: now,
         label: peer.name.clone(),
         pairing_fingerprint: fingerprint[..16].to_string(),
+        last_seen_ms: now,
     }
 }
 
 /// 生成 A/B 双方各持一份的 `PairRecord`。
-pub fn pair_records(
-    a: &Identity,
-    b: &Identity,
-    relay_url: &str,
-) -> (PairRecord, PairRecord) {
+pub fn pair_records(a: &Identity, b: &Identity, relay_url: &str) -> (PairRecord, PairRecord) {
     (
         pair_record(a, &b.public(), relay_url),
         pair_record(b, &a.public(), relay_url),
@@ -334,8 +354,8 @@ pub async fn establish_pair(
     .await?;
 
     let received_init = b.recv_session_init().await?;
-    let (ack, session_b) =
-        accept_session_init(&b.identity, &received_init, &a_public).context("接受 session_init 失败")?;
+    let (ack, session_b) = accept_session_init(&b.identity, &received_init, &a_public)
+        .context("接受 session_init 失败")?;
     b.send(&ClientToServer::SessionAck {
         to: a_id,
         msg: ack.clone(),
@@ -343,8 +363,8 @@ pub async fn establish_pair(
     .await?;
 
     let received_ack = a.recv_session_ack().await?;
-    let session_a =
-        complete_session(&a.identity, &init, &received_ack, &b_public).context("完成会话握手失败")?;
+    let session_a = complete_session(&a.identity, &init, &received_ack, &b_public)
+        .context("完成会话握手失败")?;
     Ok((session_a, session_b))
 }
 
@@ -376,7 +396,9 @@ pub fn text_payload(len: usize) -> String {
     let mut out = String::with_capacity(len);
     let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
     for _ in 0..len {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         out.push((b'!' + (seed >> 33) as u8 % 90) as char);
     }
     out

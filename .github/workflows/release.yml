@@ -1,0 +1,371 @@
+# drive-sync Release：多平台构建 + （可选）签名更新清单 + GitHub Release
+#
+# 触发：
+# - push tag `v*`（如 v0.3.0）：构建 4 平台产物，生成 latest.json（有 Secret 则签名），
+#   自动创建/更新 GitHub Release 并上传全部产物；
+# - workflow_dispatch：只产出 Actions Artifact（便于手动测试），可勾选 publish=true
+#   使用 `tag` 输入发布到已有/新 tag。
+#
+# 产物命名：
+#   drive-sync-v<version>-<target>.zip|tar.gz   # 便携包（含 README/示例配置）
+#   drive-sync-v<version>-<target>[.exe]        # 裸可执行文件（自动更新安装用）
+#   latest.json                                 # 更新清单（客户端 update check 读取）
+#
+# 签名：若 secrets.UPDATE_SIGNING_KEY（64 hex Ed25519 种子）存在 → latest.json 带签名；
+#       否则输出未签名清单（signature=null、signed=false），客户端 apply 默认拒绝，
+#       仅供本地/测试使用。
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "是否创建/更新 GitHub Release（false = 只产出 artifact）"
+        type: boolean
+        default: false
+      tag:
+        description: "发布 tag（如 v0.3.0）；留空时使用 v<Cargo 版本>"
+        type: string
+        required: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  PRODUCT: drive-sync
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 元信息：版本号必须与 tag 一致；集中计算 base_url / 公钥，避免各 job 重复逻辑。
+  # ---------------------------------------------------------------------------
+  meta:
+    name: meta
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      publish: ${{ steps.meta.outputs.publish }}
+      base_url: ${{ steps.meta.outputs.base_url }}
+      update_url: ${{ steps.meta.outputs.update_url }}
+      pubkey: ${{ steps.meta.outputs.pubkey }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version / tag / publish
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="drive-cli"))')
+          PUBKEY=$(tr -d '[:space:]' < crates/updater/update-pubkey.hex)
+          if [[ ${#PUBKEY} -ne 64 ]]; then
+            echo "::error::crates/updater/update-pubkey.hex 应为 64 字符 hex"
+            exit 1
+          fi
+
+          EVENT="${{ github.event_name }}"
+          TAG=""
+          PUBLISH="false"
+          if [[ "$EVENT" == "push" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            PUBLISH="true"
+          else
+            TAG="${{ inputs.tag }}"
+            if [[ -z "$TAG" ]]; then TAG="v${VERSION}"; fi
+            if [[ "${{ inputs.publish }}" == "true" ]]; then PUBLISH="true"; fi
+          fi
+
+          if [[ "$TAG" != v* ]]; then
+            echo "::error::tag 必须以 v 开头（当前: $TAG）"
+            exit 1
+          fi
+          if [[ "${TAG#v}" != "$VERSION" ]]; then
+            echo "::error::tag ${TAG} 与 Cargo 版本 ${VERSION} 不一致：请先修改 workspace.package.version 并提交"
+            exit 1
+          fi
+
+          REPO="${{ github.repository }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "pubkey=$PUBKEY" >> "$GITHUB_OUTPUT"
+          echo "base_url=https://github.com/${REPO}/releases/download/${TAG}" >> "$GITHUB_OUTPUT"
+          echo "update_url=https://github.com/${REPO}/releases/latest/download/latest.json" >> "$GITHUB_OUTPUT"
+          echo "版本: $VERSION  tag: $TAG  publish: $PUBLISH"
+
+  # ---------------------------------------------------------------------------
+  # 4 平台构建：打包 + 裸二进制 + 每平台 asset JSON（manifest 输入）
+  # ---------------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.target }})
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            exe_suffix: ".exe"
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            exe_suffix: ""
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            exe_suffix: ""
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+            exe_suffix: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps (arboard / xcb)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Build release binaries
+        shell: bash
+        env:
+          DRIVE_UPDATE_URL: ${{ needs.meta.outputs.update_url }}
+          DRIVE_UPDATE_PUBKEY: ${{ needs.meta.outputs.pubkey }}
+        run: |
+          set -euo pipefail
+          # 发布产物启用 tls feature（可连 wss:// 中继）。
+          cargo build --release --locked -p drive-cli -p drive-relay -p drive-updater --bins \
+            --features drive-cli/tls
+
+      - name: Package archive + raw binary + asset JSON
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          ARCHIVE: ${{ matrix.archive }}
+          BIN_EXT: ${{ matrix.exe_suffix }}
+          BASE_URL: ${{ needs.meta.outputs.base_url }}
+        run: |
+          set -euo pipefail
+          DIST="dist"
+          PKG="$DIST/package"
+          rm -rf "$DIST"
+          mkdir -p "$PKG" "$DIST/assets"
+
+          cp "target/release/drive-sync${BIN_EXT}" "$PKG/"
+          cp "target/release/drive-relay${BIN_EXT}" "$PKG/"
+          [[ -f README.md ]] && cp README.md "$PKG/" || true
+          [[ -f LICENSE ]] && cp LICENSE "$PKG/" || true
+          [[ -f LICENSE-MIT ]] && cp LICENSE-MIT "$PKG/" || true
+          [[ -f docs/deployment.md ]] && cp docs/deployment.md "$PKG/DEPLOYMENT.md" || true
+          cat > "$PKG/config.example.json" <<'JSON'
+          {
+            "relay_url": "wss://sync.example.com/ws",
+            "access_token": "<中继访问令牌，见 docs/deployment.md>"
+          }
+          JSON
+
+          ARCHIVE_NAME="drive-sync-v${VERSION}-${TARGET}.${ARCHIVE}"
+          RAW_NAME="drive-sync-v${VERSION}-${TARGET}${BIN_EXT}"
+          cp "target/release/drive-sync${BIN_EXT}" "$DIST/${RAW_NAME}"
+
+          if [[ "$ARCHIVE" == "zip" ]]; then
+            SEVENZIP=""
+            if command -v 7z >/dev/null 2>&1; then
+              SEVENZIP="7z"
+            elif [[ -x "/c/Program Files/7-Zip/7z.exe" ]]; then
+              SEVENZIP="/c/Program Files/7-Zip/7z.exe"
+            fi
+            if [[ -z "$SEVENZIP" ]]; then
+              echo "::error::找不到 7z，无法创建 zip"
+              exit 1
+            fi
+            ( cd "$PKG" && "$SEVENZIP" a -tzip "../${ARCHIVE_NAME}" . >/dev/null )
+          else
+            tar -czf "$DIST/${ARCHIVE_NAME}" -C "$PKG" .
+          fi
+
+          # 生成该平台的 asset JSON（自动更新清单里的 url 指向裸二进制）
+          "./target/release/gen-manifest${BIN_EXT}" asset \
+            --target "$TARGET" \
+            --url "${BASE_URL}/${RAW_NAME}" \
+            --file "$DIST/${RAW_NAME}" \
+            --out "$DIST/assets/asset-${TARGET}.json"
+
+          ls -l "$DIST" "$DIST/assets"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            dist/drive-sync-v*
+            dist/assets/asset-*.json
+
+  # ---------------------------------------------------------------------------
+  # 汇总：合并 asset JSON → latest.json → （有 Secret 时）Ed25519 签名 → 自检
+  # ---------------------------------------------------------------------------
+  manifest:
+    name: manifest (latest.json)
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Build manifest tools
+        run: cargo build --release --locked -p drive-updater --bins
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: build-*
+          merge-multiple: true
+
+      - name: Generate unsigned latest.json
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          UPDATE_URL: ${{ needs.meta.outputs.update_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          find dist -name 'asset-*.json' -exec cp {} assets/ \;
+          ASSET_COUNT=$(find assets -name 'asset-*.json' | wc -l)
+          if [[ "$ASSET_COUNT" -ne 4 ]]; then
+            echo "::error::期望 4 个平台的 asset JSON，实际 $ASSET_COUNT 个"
+            find assets -type f
+            exit 1
+          fi
+          {
+            echo "drive-sync v${VERSION}"
+            echo
+            echo "自动构建产物。客户端检查更新地址: ${UPDATE_URL}"
+            echo
+            echo "## 变更"
+            echo
+            git log --oneline -20 || true
+          } > release-notes.md
+          ./target/release/gen-manifest merge \
+            --version "${VERSION}" \
+            --notes-file release-notes.md \
+            --assets assets \
+            --out dist/latest.json
+          mv release-notes.md dist/release-notes.md
+
+      - name: Sign manifest (if UPDATE_SIGNING_KEY is configured)
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          PUBKEY: ${{ needs.meta.outputs.pubkey }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${UPDATE_SIGNING_KEY:-}" ]]; then
+            echo "::notice::检测到 secrets.UPDATE_SIGNING_KEY，生成 Ed25519 签名清单"
+            ./target/release/sign-manifest \
+              --in dist/latest.json \
+              --out dist/latest.json
+            ./target/release/gen-manifest verify \
+              --manifest dist/latest.json \
+              --pubkey-hex "$PUBKEY"
+            echo "::notice::latest.json 已签名，公钥 ${PUBKEY:0:16}…"
+          else
+            echo "::warning::未配置 secrets.UPDATE_SIGNING_KEY：latest.json 为未签名清单（signed=false）。客户端 update apply 默认拒绝未签名清单，仅用于本地/测试。"
+            if ! grep -q '"signed": false' dist/latest.json; then
+              echo "::error::未签名清单缺少 signed=false 标记"
+              exit 1
+            fi
+          fi
+          cat dist/latest.json
+
+      - name: Upload update manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-manifest
+          if-no-files-found: error
+          path: |
+            dist/latest.json
+            dist/release-notes.md
+
+  # ---------------------------------------------------------------------------
+  # 发布：仅 tag push 或 workflow_dispatch 勾选 publish=true 时执行
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish GitHub Release
+    needs: [meta, manifest]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: build-*
+          merge-multiple: true
+
+      - name: Download update manifest
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          name: update-manifest
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          FILES=(drive-sync-v* latest.json)
+          if [[ ${#FILES[@]} -lt 2 ]]; then
+            echo "::error::发布产物缺失（期望 >= 2 个文件）"
+            ls -la
+            exit 1
+          fi
+          ls -la
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，改为上传/覆盖产物"
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+          else
+            gh release create "$TAG" "${FILES[@]}" \
+              --title "drive-sync v${VERSION}" \
+              --notes-file release-notes.md \
+              --latest
+          fi
+          echo "::notice::已发布 https://github.com/${{ github.repository }}/releases/tag/${TAG}"

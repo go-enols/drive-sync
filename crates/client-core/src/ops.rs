@@ -1,4 +1,4 @@
-﻿//! 一次性连接辅助命令：配对（A 端发起 / B 端加入）、云端暂存 put/list/get、目录下载。
+//! 一次性连接辅助命令：配对（A 端发起 / B 端加入）、云端暂存 put/list/get、目录下载。
 //!
 //! 这些操作不需要常驻 daemon：各自建立一条中继连接、完成一次交互后关闭。
 //! 配对助手支持非交互（`--yes` / e2e 自动确认 SAS），其余日志不打印内容明文。
@@ -121,9 +121,8 @@ pub async fn pair_pairwise(
     let ui = std::sync::Arc::new(AutoPairUi::new());
     let initiator_config = initiator.clone();
     let initiator_ui = ui.clone();
-    let initiator_task = tokio::spawn(async move {
-        pair_initiate(&initiator_config, initiator_ui.as_ref()).await
-    });
+    let initiator_task =
+        tokio::spawn(async move { pair_initiate(&initiator_config, initiator_ui.as_ref()).await });
 
     // 等待发起方生成配对码。
     let ui_ref = ui.clone();
@@ -187,14 +186,14 @@ fn resolve_token(config: &RuntimeConfig, store: &Store) -> Result<String> {
 async fn connect(config: &RuntimeConfig, store: &Store, identity: &Identity) -> Result<Connection> {
     let relay = resolve_relay(config, store)?;
     let token = resolve_token(config, store)?;
-    Ok(Connection::connect(&relay, identity, &token).await?)
+    Connection::connect(&relay, identity, &token).await
 }
 
 /// A 端发起配对：打印二维码串/配对码，等待 B 加入，双方确认 SAS 后保存 PairRecord。
 pub async fn pair_initiate(config: &RuntimeConfig, ui: &dyn PairUi) -> Result<PairOutcome> {
     let store = Store::open(&config.data_dir)?;
     let identity = crate::runtime::load_identity(&store, config.device_name.as_deref())?;
-    let relay = resolve_relay(&config, &store)?;
+    let relay = resolve_relay(config, &store)?;
     let mut conn = connect(config, &store, &identity).await?;
 
     let mut initiator = PairingInitiator::start(&identity, &relay);
@@ -232,9 +231,7 @@ pub async fn pair_initiate(config: &RuntimeConfig, ui: &dyn PairUi) -> Result<Pa
                 initiator
                     .handle_join(&join)
                     .map_err(|error| anyhow!("处理对端加入信息失败: {error}"))?;
-                let sas = initiator
-                    .sas()
-                    .ok_or_else(|| anyhow!("未能派生配对 SAS"))?;
+                let sas = initiator.sas().ok_or_else(|| anyhow!("未能派生配对 SAS"))?;
                 ui.on_peer(&join.device);
                 ui.on_sas(&sas);
                 if !ui.confirm_sas(&sas) {
@@ -277,8 +274,8 @@ pub async fn pair_respond(
     let identity = crate::runtime::load_identity(&store, config.device_name.as_deref())?;
     let (known_invite, pair_code): (Option<PairInvite>, String) = match (qr, code) {
         (Some(qr_string), _) => {
-            let (invite, code) = decode_qr(qr_string)
-                .map_err(|error| anyhow!("解析配对二维码失败: {error}"))?;
+            let (invite, code) =
+                decode_qr(qr_string).map_err(|error| anyhow!("解析配对二维码失败: {error}"))?;
             (Some(invite), code)
         }
         (None, Some(code)) => (None, code.to_string()),
@@ -355,9 +352,7 @@ pub async fn pair_respond(
         }
     }
 
-    let sas = joiner
-        .sas()
-        .ok_or_else(|| anyhow!("未能派生配对 SAS"))?;
+    let sas = joiner.sas().ok_or_else(|| anyhow!("未能派生配对 SAS"))?;
     ui.on_sas(&sas);
     if !ui.confirm_sas(&sas) {
         bail!("SAS 未确认，配对已取消");
@@ -371,7 +366,11 @@ pub async fn pair_respond(
 }
 
 /// 等待指定类型的服务器响应（配对/vault 一次性连接用）。
-async fn wait_response<F>(conn: &mut Connection, timeout: Duration, predicate: F) -> Result<ServerToClient>
+async fn wait_response<F>(
+    conn: &mut Connection,
+    timeout: Duration,
+    predicate: F,
+) -> Result<ServerToClient>
 where
     F: Fn(&ServerToClient) -> bool,
 {
@@ -435,8 +434,8 @@ pub async fn vault_put(
         note: String::new(),
     };
     let key = drive_core::crypto::random_key();
-    let ciphertext = seal(&key, object_id.as_bytes(), &data)
-        .map_err(|error| anyhow!("加密失败: {error}"))?;
+    let ciphertext =
+        seal(&key, object_id.as_bytes(), &data).map_err(|error| anyhow!("加密失败: {error}"))?;
     let requested_ttl = ttl_days.saturating_mul(24 * 60 * 60);
     let ttl_secs = effective_ttl_secs(requested_ttl);
 
@@ -639,10 +638,9 @@ pub async fn catalog_fetch(
                 first_session_at.get_or_insert_with(tokio::time::Instant::now);
                 tracing::info!(peer = %peer_id, name = %name, "会话已建立，等待对端可用性列表");
             }
-            RuntimeEvent::PeerHaveList {
-                peer_id,
-                entry_ids,
-            } if !requested && entry_ids.iter().any(|id| id == entry_id) => {
+            RuntimeEvent::PeerHaveList { peer_id, entry_ids }
+                if !requested && entry_ids.iter().any(|id| id == entry_id) =>
+            {
                 tracing::info!(peer = %peer_id, "对端持有目标文件，开始请求传输");
                 if let Err(error) = handle.request_fetch(&peer_id, entry_id).await {
                     failure = Some(error.to_string());

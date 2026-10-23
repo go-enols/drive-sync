@@ -1,0 +1,25 @@
+[package]
+name = "drive-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "drive-sync 移动端核心：C ABI + Android JNI 壳（Android/iOS 共用）"
+
+[lib]
+name = "drive_mobile"
+# cdylib: Android .so / 桌面动态库；staticlib: iOS libdrive_mobile.a；rlib: 供测试复用
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+drive-core = { workspace = true }
+drive-client = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+# JNI 壳：仅非 iOS 目标编译（见 src/jni.rs 的 cfg）；iOS 静态库不导出 JNI 符号。
+jni = "0.21"
+
+[dev-dependencies]
+tempfile = "3"

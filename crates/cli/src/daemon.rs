@@ -1,4 +1,4 @@
-﻿//! `daemon` 子命令：常驻同步（连接循环 + 剪切板监听线程 + 事件摘要打印）。
+//! `daemon` 子命令：常驻同步（连接循环 + 剪切板监听线程 + 事件摘要打印）。
 //!
 //! Ctrl-C 优雅退出：停止监听线程、关闭 WS 连接（Runtime::run 内的 shutdown 分支）。
 
@@ -11,8 +11,15 @@ use drive_client::{Runtime, RuntimeEvent};
 
 use crate::clipboard;
 use crate::common::{format_now, App};
+use crate::update_cmd;
 
-pub async fn run(app: &App, clipboard_spec: &str, poll_ms: u64) -> Result<()> {
+pub async fn run(
+    app: &App,
+    clipboard_spec: &str,
+    poll_ms: u64,
+    auto_update: bool,
+    update_restart: bool,
+) -> Result<()> {
     let store = app.store()?;
     if !store.identity_exists() {
         bail!(
@@ -65,7 +72,34 @@ pub async fn run(app: &App, clipboard_spec: &str, poll_ms: u64) -> Result<()> {
     println!("  中继: {relay_display}");
     println!("  数据目录: {data_dir_display}");
     println!("  剪切板: {}，轮询 {poll_ms} ms", mode.describe());
+    if auto_update {
+        println!(
+            "  自动更新: 启动时检查一次 + 每 6 小时检查（自动重启: {}）",
+            if update_restart {
+                "是"
+            } else {
+                "否，安装后需手动重启"
+            }
+        );
+    } else {
+        println!("  自动更新: 未启用（可用 --auto-update 开启）");
+    }
     println!("  按 Ctrl-C 退出");
+
+    if auto_update {
+        // 后台任务：阻塞下载放到 spawn_blocking，避免卡住同步运行时。
+        let update_app = app.clone();
+        tokio::spawn(async move {
+            update_cmd::auto_update_loop(
+                update_app,
+                update_restart,
+                update_cmd::AUTO_UPDATE_INTERVAL,
+            )
+            .await;
+        });
+    } else if update_restart {
+        eprintln!("提示: --update-restart 仅在同时启用 --auto-update 时生效，已忽略。");
+    }
 
     let mut runtime_task = tokio::spawn(async move { runtime.run().await });
     let mut runtime_finished = false;

@@ -102,7 +102,12 @@ impl CatalogEntry {
 
     /// 展示名：`name v1.2.3 (windows)`。
     pub fn display_name(&self) -> String {
-        format!("{} v{} ({})", self.name, self.version, self.platform.as_str())
+        format!(
+            "{} v{} ({})",
+            self.name,
+            self.version,
+            self.platform.as_str()
+        )
     }
 }
 
@@ -110,7 +115,9 @@ impl CatalogEntry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CatalogOp {
-    Upsert { entry: CatalogEntry },
+    Upsert {
+        entry: CatalogEntry,
+    },
     Delete {
         id: String,
         hlc: Hlc,
@@ -232,21 +239,25 @@ impl Catalog {
                         return;
                     }
                 }
-                let mut tomb = self.entries.get(id).cloned().unwrap_or_else(|| CatalogEntry {
-                    id: id.clone(),
-                    name: String::new(),
-                    version: String::new(),
-                    platform: TargetPlatform::Any,
-                    kind: String::new(),
-                    size: 0,
-                    content_hash: String::new(),
-                    tags: Vec::new(),
-                    notes: String::new(),
-                    updated_at_ms: *deleted_at_ms,
-                    updated_by: deleted_by.clone(),
-                    hlc: hlc.clone(),
-                    deleted: true,
-                });
+                let mut tomb = self
+                    .entries
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| CatalogEntry {
+                        id: id.clone(),
+                        name: String::new(),
+                        version: String::new(),
+                        platform: TargetPlatform::Any,
+                        kind: String::new(),
+                        size: 0,
+                        content_hash: String::new(),
+                        tags: Vec::new(),
+                        notes: String::new(),
+                        updated_at_ms: *deleted_at_ms,
+                        updated_by: deleted_by.clone(),
+                        hlc: hlc.clone(),
+                        deleted: true,
+                    });
                 tomb.deleted = true;
                 tomb.hlc = hlc.clone();
                 tomb.updated_by = deleted_by.clone();
@@ -354,8 +365,8 @@ mod tests {
         newer.notes = "newer note".into();
         let op_b = b.upsert_local(newer, "dev-b", 2000);
 
-        a.apply_ops(&[op_b.clone()]);
-        b.apply_ops(&[op_a.clone()]);
+        a.apply_ops(std::slice::from_ref(&op_b));
+        b.apply_ops(std::slice::from_ref(&op_a));
         assert_eq!(
             a.get("ent-1").unwrap().notes,
             "newer note",

@@ -1,8 +1,8 @@
-﻿//! `peers` 子命令：查看 / 删除已配对设备。
+//! `peers` 子命令：查看 / 删除已配对设备。
 //!
-//! 配对记录没有 TTL：只有显式 `peers remove`（或对端发送撤销）才会解除。
-//! 本命令是**纯本地文件操作**（不连中继），daemon 运行中也可执行；daemon 会每 2 秒
-//! 检测 peers.json 变化，被删除的对端会尽力收到 `PairRevoked` 并立即销毁会话。
+//! 配对记录没有 TTL（仅 90 天不活跃自动失效）：只有显式 `peers remove` 才会立即解除。
+//! 本命令是**纯本地文件操作**（不连中继），daemon 运行中也可执行；删除时会生成签名的
+//! 离线撤销通知写入本地队列，daemon 会投递到中继离线信箱（对端离线也能在下次上线后清理）。
 
 use std::io::{IsTerminal, Write};
 
@@ -10,6 +10,8 @@ use anyhow::{bail, Result};
 use clap::Subcommand;
 use drive_client::Store;
 use drive_core::pairing::PairRecord;
+use drive_core::revocation::{reason as revocation_reason, RevocationNotice};
+use drive_core::util::now_ms;
 
 use crate::common::{format_ms, App};
 
@@ -59,6 +61,10 @@ fn list(store: &Store, json: bool) -> Result<()> {
                     "paired_at_ms": record.paired_at_ms,
                     "paired_at": format_ms(record.paired_at_ms),
                     "pairing_fingerprint": record.pairing_fingerprint,
+                    "last_seen_ms": record.last_seen_or_paired(),
+                    "last_seen": format_ms(record.last_seen_or_paired()),
+                    "expires_at_ms": record.expires_at_ms(),
+                    "expires_at": format_ms(record.expires_at_ms()),
                 })
             })
             .collect();
@@ -70,7 +76,7 @@ fn list(store: &Store, json: bool) -> Result<()> {
         return Ok(());
     }
     println!(
-        "已配对设备（{} 个；配对永久有效，只有显式 `peers remove` 才会解除）:",
+        "已配对设备（{} 个；显式 `peers remove` 才会立即解除，超过 90 天不活跃将自动失效）:",
         peers.len()
     );
     for (index, record) in peers.iter().enumerate() {
@@ -86,6 +92,11 @@ fn list(store: &Store, json: bool) -> Result<()> {
             format_ms(record.paired_at_ms),
             record.pairing_fingerprint
         );
+        println!(
+            "      最近活跃: {} | 90 天不活跃将于 {} 失效",
+            format_ms(record.last_seen_or_paired()),
+            format_ms(record.expires_at_ms())
+        );
         println!("      中继: {}", record.relay_url);
     }
     println!();
@@ -94,10 +105,7 @@ fn list(store: &Store, json: bool) -> Result<()> {
 }
 
 fn resolve_match<'a>(peers: &'a [PairRecord], target: &str) -> Result<Option<&'a PairRecord>> {
-    if let Some(exact) = peers
-        .iter()
-        .find(|record| record.peer.device_id == target)
-    {
+    if let Some(exact) = peers.iter().find(|record| record.peer.device_id == target) {
         return Ok(Some(exact));
     }
     let matches: Vec<&PairRecord> = peers
@@ -110,9 +118,7 @@ fn resolve_match<'a>(peers: &'a [PairRecord], target: &str) -> Result<Option<&'a
         _ => {
             let candidates = matches
                 .iter()
-                .map(|record| {
-                    format!("  {}  {}", record.peer.device_id, record.display_name())
-                })
+                .map(|record| format!("  {}  {}", record.peer.device_id, record.display_name()))
                 .collect::<Vec<_>>()
                 .join("\n");
             bail!(
@@ -145,8 +151,34 @@ fn remove(store: &Store, target: &str, yes: bool) -> Result<()> {
 
     store.remove_peer(&device_id)?;
     println!("已删除配对记录: {name} ({device_id})");
-    println!("  对端将无法再与本机建立会话；对端在线且 daemon 运行时会在约 2 秒内收到 PairRevoked 通知，");
-    println!("  若对端离线，它下次尝试握手时会被拒绝（需要重新配对）。");
+
+    // 生成签名的离线撤销通知：对端离线时由中继离线信箱补达，上线后自动清理。
+    match store.load_identity() {
+        Ok(identity) => {
+            match RevocationNotice::create(
+                &identity,
+                &device_id,
+                revocation_reason::USER_REMOVED,
+                now_ms(),
+            ) {
+                Ok(notice) => match store.queue_revocation(&notice) {
+                    Ok(()) => {
+                        println!(
+                            "  已生成离线撤销通知（{}）；daemon 在线时会投递到中继，对端离线也会在下次上线后清理。",
+                            notice.notice_id()
+                        );
+                    }
+                    Err(error) => {
+                        eprintln!("警告: 写入离线撤销队列失败（对端离线时可能无法清理）: {error}")
+                    }
+                },
+                Err(error) => eprintln!("警告: 生成离线撤销通知失败: {error}"),
+            }
+        }
+        Err(error) => eprintln!("警告: 读取身份失败，跳过离线撤销通知: {error}"),
+    }
+    println!("  对端将无法再与本机建立会话；对端在线且 daemon 运行时会在约 2 秒内收到 PairRevoked 通知；");
+    println!("  若对端离线，它会在下次上线时收到离线撤销通知（或尝试握手时被拒绝）。");
     println!("  提示: 本机待发队列/进行中的传输由 daemon 自动清理；本机文件不会被删除。");
     Ok(())
 }

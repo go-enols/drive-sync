@@ -1,4 +1,4 @@
-﻿//! drive-sync 命令行客户端。
+//! drive-sync 命令行客户端。
 //!
 //! 子命令：
 //! - `init --name <设备名>`：初始化身份与配置
@@ -8,6 +8,7 @@
 //! - `peers list|remove`：查看 / 删除已配对设备（配对记录无 TTL，只有显式删除才解除）
 //! - `catalog add|list|remove|fetch`：软件目录（本体留在本地，云端只中转）
 //! - `vault put|list|get`：客户端加密的云端暂存（TTL ≤ 30 天）
+//! - `update check|apply`：检查 / 下载并安装新版本（Ed25519 签名清单 + BLAKE3 校验）
 //!
 //! 全局参数：`--data-dir`（或环境变量 `DRIVE_SYNC_DATA_DIR`）、`--log-level`、
 //! `--relay`、`--token`。
@@ -21,6 +22,7 @@ mod daemon;
 mod pair_cmd;
 mod peers_cmd;
 mod status_cmd;
+mod update_cmd;
 mod vault_cmd;
 
 use std::path::PathBuf;
@@ -89,6 +91,12 @@ enum Command {
         /// 剪切板轮询间隔（毫秒）
         #[arg(long, default_value_t = 300, value_name = "MS")]
         poll_ms: u64,
+        /// 启动时检查一次自动更新，之后每 6 小时检查（默认关闭）
+        #[arg(long)]
+        auto_update: bool,
+        /// 自动更新安装成功后自动拉起新进程并退出（配合 --auto-update）
+        #[arg(long)]
+        update_restart: bool,
     },
     /// 查看本地状态（设备/配对/目录/暂存/spool）。
     Status,
@@ -106,6 +114,11 @@ enum Command {
     Vault {
         #[command(subcommand)]
         command: vault_cmd::VaultCommand,
+    },
+    /// 检查 / 下载并安装新版本（Ed25519 签名清单 + BLAKE3 校验）。
+    Update {
+        #[command(subcommand)]
+        command: update_cmd::UpdateCommand,
     },
 }
 
@@ -129,12 +142,16 @@ async fn run(cli: Cli) -> Result<()> {
             let config = app.runtime_config(&store)?;
             pair_cmd::run(&config, qr, code, yes).await
         }
-        Command::Daemon { clipboard, poll_ms } => {
-            daemon::run(&app, &clipboard, poll_ms).await
-        }
+        Command::Daemon {
+            clipboard,
+            poll_ms,
+            auto_update,
+            update_restart,
+        } => daemon::run(&app, &clipboard, poll_ms, auto_update, update_restart).await,
         Command::Peers { command } => peers_cmd::run(&app, command),
         Command::Catalog { command } => catalog_cmd::run(&app, command).await,
         Command::Vault { command } => vault_cmd::run(&app, command).await,
+        Command::Update { command } => update_cmd::run(&app, command),
     }
 }
 

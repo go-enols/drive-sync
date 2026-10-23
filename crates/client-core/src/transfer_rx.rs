@@ -1,4 +1,4 @@
-﻿//! 文件接收端：`.part` 临时文件、按块顺序写入、BLAKE3 校验、原子重命名、断点续传。
+//! 文件接收端：`.part` 临时文件、按块顺序写入、BLAKE3 校验、原子重命名、断点续传。
 //!
 //! 与 `drive_core::transfer::TransferReceiver` 的差异：本实现可真正从已有 `.part`
 //! 恢复（读回前缀重建哈希、丢弃未对齐尾部），这是协议 §7.3 "重连续传" 需要的。
@@ -109,9 +109,7 @@ impl PartialReceiver {
         if self.received + data.len() as u64 > self.manifest.size {
             bail!("写入超过清单声明的大小");
         }
-        self.file
-            .write_all(data)
-            .context("写入接收临时文件失败")?;
+        self.file.write_all(data).context("写入接收临时文件失败")?;
         self.hasher.update(data);
         self.received += data.len() as u64;
         Ok(())

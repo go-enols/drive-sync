@@ -1,4 +1,4 @@
-﻿# drive-sync 协议规范 v0.1
+# drive-sync 协议规范 v0.1
 
 > 状态：原型实现基准（2026-10）。实现代码见 `crates/core`，本文档与 `drive-core` 中的类型一一对应。
 > 变更协议必须同步修改：`crates/core` 类型、本文档、`crates/e2e-tests` 互操作测试。
@@ -65,7 +65,7 @@
 2. 客户端发送：
 
 ```json
-{"t":"hello","v":1,"device":{...PublicIdentity...},"access_token":"<自建服务器共享令牌>","nonce":"<32 hex 随机>","signature":"<128 hex>"}
+{"t":"hello","v":2,"device":{...PublicIdentity...},"access_token":"<自建服务器共享令牌>","nonce":"<32 hex 随机>","signature":"<128 hex>"}
 ```
 
 `signature = Ed25519_sign(ed_secret, b"drive-sync-hello-v1" || nonce || device_id)`。
@@ -76,7 +76,7 @@
 4. 中继回复：
 
 ```json
-{"t":"welcome","v":1,"device_id":"dev-...","session_id":"<中继连接 id>","server_time_ms":1750000000000,"online":["dev-...", "..."]}
+{"t":"welcome","v":2,"device_id":"dev-...","session_id":"<中继连接 id>","server_time_ms":1750000000000,"online":["dev-...", "..."]}
 ```
 
 5. 之后广播 `presence` 给所有在线客户端：`{"t":"presence","online":[...]}`。
@@ -97,6 +97,8 @@
 | `vault_get` | object_id | 下载密文 |
 | `vault_list` | — | 列出对象（含过期时间） |
 | `vault_delete` | object_id | 立即删除 |
+| `revocation_put` | notice | 投递签名的解除配对通知（对端离线时中继暂存，上线后投递） |
+| `revocation_ack` | notice_id | 确认已处理，中继删除该通知 |
 | `ping` | ts_ms | 应用层心跳 |
 
 中继 → 客户端：
@@ -110,6 +112,8 @@
 | `relay` | from, envelope | 密文转发 |
 | `presence` | online | 在线设备 id 列表 |
 | `vault_put_result` / `vault_get_result` / `vault_list_result` / `vault_delete_result` | 见类型定义 | 暂存操作结果 |
+| `pending_revocations` | notices[] | 登录后推送离线期间收到的解除配对通知 |
+| `revocation_put_result` | ok, notice_id, message | 撤销通知投递结果 |
 | `pong` | ts_ms | 心跳响应 |
 | `error` | code, message | 协议/权限/限额错误 |
 
@@ -124,13 +128,34 @@
 ### 4.4 在线状态与投递语义
 
 - `presence.online` 是本中继上所有已认证设备；客户端只对**已配对**且在线的设备建会话。
-- 中继**不缓存**发往离线设备的帧（回声/离线队列由客户端本地 spool 负责，见 §8）。
+- 中继**不缓存**发往离线设备的帧（离线队列由客户端本地 spool 负责，见 §8）；**唯一例外**是 §4.6 的签名解除配对通知（控制面元数据，非内容）。
 - 中继转发校验：
   - `relay.to` 必须是当前在线设备；
-  - 只能转发给与自己已配对的设备？中继不感知配对关系（E2E 加密保证内容安全），但会拒绝 `to == self`。
-  - 生产增强：中继可要求双方都提交过配对完成回执（`paired_with` 声明）再做转发过滤；v0.1 不做。
+  - 中继不感知配对关系（E2E 加密保证内容安全），但会拒绝 `to == self`。
+  - 生产增强：中继可要求双方都提交过配对完成回执（`paired_with` 声明）再做转发过滤；原型不做。
 
-### 4.5 限额
+### 4.5 离线解除配对通知信箱（v2 新增）
+
+目的：A 删除与 B 的配对时 B 离线，B 下次上线也要能自动清理，无需 A 再次操作。
+
+- 通知 `RevocationNotice` 由**删除方 A 用身份 Ed25519 私钥签名**：
+
+```json
+{"content":{"v":1,"notice_id":"rev-<24 hex>","from":"dev-A","to":"dev-B","reason":"user_removed|inactive_90d","created_at_ms":0,"expires_at_ms":7776000000},"signature":"<128 hex>"}
+```
+
+签名输入：`b"drive-sync-revocation-v1" || canonical_json(content)`；`expires_at_ms` 默认 `created_at_ms + 90 天`（与 §5.1 不活跃窗口一致）。
+- A 发送 `revocation_put{notice}`；中继校验：已认证、`notice.from == A`、签名有效、未过期、`to != A`、单条 ≤ 8 KiB。
+- 投递：
+  - B 在线 → 立即推送 `pending_revocations{notices:[...]}`；
+  - B 离线 → 中继持久化到控制面信箱（`<data-dir>/revocations/index.json`，原子写），B 登录后推送；
+  - 中继保留通知直到 B 回 `revocation_ack{notice_id}` 或通知过期（≤90 天）；重复投递幂等。
+- B 收到后：用本地 PairRecord 中 A 的公钥验签 → 验签通过才删除配对记录并向中继 ack（防中继伪造撤销）；无对应配对记录也直接 ack 清理。
+- 限额/配额（中继可配置）：每发送方最多 20 条未处理、总通知 ≤ 500 条、单条 ≤ 8 KiB；超限返回 `error`/`revocation_put_result{ok:false}`。
+- 隐私边界：中继可见"设备 A 撤销了与 B 的配对关系"这一元数据与时间；通知不含配对密钥/内容，且无法被中继伪造（验签失败会被 B 忽略）。
+- 清理：中继每 60s（或 5min）删除过期通知 + 启动时清理；损坏/过期通知不影响启动。
+
+### 4.6 限额
 
 | 项 | 默认值 |
 |---|---|
@@ -174,11 +199,15 @@ A(已运行)                             中继                         B(输入
 - `pairing_fingerprint = hex(BLAKE3(shared))[..16]`，写入 PairRecord，用于两端审计；**不保存 shared/pairing key**。
 - 配对完成即长期信任；后续连接用 §6 会话握手自动认证。
 
-### 5.1 配对持久性（永久有效，无 TTL）
+### 5.1 配对持久性与活跃期（无 TTL，但有 90 天不活跃规则）
 
-- **配对永久有效（无 TTL）**：不会因为离线多久、重启、重装应用（保留 data_dir）、换网络、换 IP、中继重启而失效，无需重新配对。
-- 配对信息只存在设备本地 `peers.json`；中继不保存配对关系（只保存 120s 的待配对登记）。因此中继地址变化只需更新两端配置中的 `relay`，配对关系仍然有效。
+- **配对默认永久有效**：不会因为离线几天、重启、重装应用（保留 data_dir）、换网络、换 IP、中继重启而失效，无需重新配对。
+- **90 天不活跃自动失效（v2 新增）**：若某台设备与本机连续 **90 天**没有任何成功的 E2E 会话/消息/心跳，则视为该配对过期；任一方再次使用时自动删除该配对记录并要求重新配对（双方基于各自记录的 `last_seen_ms` 独立判定，正常时钟下两侧会在相近时间都判定过期）。
+  - 活跃定义：成功建立 E2E 会话、收发任意 E2E 消息、或心跳（Ping/Pong）。仅"中继上看到在线"不算（中继不可信）。
+  - 为了长时间在线但无同步的设备不被误判，daemon 在会话空闲 6h 时自动发一次 E2E 心跳，双方刷新 `last_seen_ms`。
+- 配对信息只存在设备本地 `peers.json`；中继不保存配对关系（只保存 120s 的待配对登记与 §4.5 的撤销通知）。中继地址变化只需更新两端配置中的 `relay`，配对关系仍然有效。
 - 重复配对同一设备是**幂等更新**（`Store::upsert_peer` 按 `device_id` 更新，不产生重复记录）。
+- 删除 `identity.json`（换新身份）等同于该设备全部配对失效，需要重新配对。
 
 ### 5.2 解除配对（撤销信任）
 
@@ -186,10 +215,11 @@ A(已运行)                             中继                         B(输入
 
 撤销语义：
 
-1. 删除方（A）立即从 `peers.json` 移除 B；daemon 在 ≤2s 内检测到外部变更，若与 B 存在 E2E 会话，先经该会话尽力发送 `PeerMessage::PairRevoked{reason}`，随后销毁会话、清理该 peer 的 spool/传输/pending 握手；此后 A 拒绝来自 B 的一切会话握手。
-2. 被删除方（B）收到 `PairRevoked` 后删除本地对 A 的 PairRecord、销毁会话并提示"对端已解除配对"；若 B 当时离线，则下次 B 发起会话握手会被 A 拒绝（安全兜底），B 侧表现为同步失败，需双方删除后重新配对。
-3. 重新建立信任只能重新走 §5 配对流程（新配对码/二维码）。
-4. 复制/篡改 `peers.json` 无法获得信任：会话握手需要对方 Ed25519 私钥签名，且对方必须同样保留配对记录；中继无法伪造。
+1. 删除方（A）立即从 `peers.json` 移除 B；同时生成签名的 `RevocationNotice` 写入本地待发队列，并在连上中继后 `revocation_put` 投递（B 在线则立即送达；B 离线则中继暂存，见 §4.5）。daemon 在 ≤2s 内检测到外部变更时也会走同一流程；若与 B 存在 E2E 会话，先经该会话尽力发送 `PeerMessage::PairRevoked{reason}`，随后销毁会话、清理该 peer 的 spool/传输/pending 握手；此后 A 拒绝来自 B 的一切会话握手。
+2. 被删除方（B）收到 `PairRevoked`（在线）或 `pending_revocations`（离线补投）后，用本地 PairRecord 中 A 的公钥验签通过 → 删除本地对 A 的 PairRecord、销毁会话、回 `revocation_ack` 并提示"对端已解除配对"。验签失败通知被忽略（中继无法伪造撤销）。
+3. 若双方都长期离线且没有任何一方重新上线，双方可在本地按 §5.1 的 90 天规则自行过期；只要 B 在通知有效期内（≤90 天）上线，就能收到并自动清理。
+4. 重新建立信任只能重新走 §5 配对流程（新配对码/二维码）。
+5. 复制/篡改 `peers.json` 无法获得信任：会话握手需要对方 Ed25519 私钥签名，且对方必须同样保留配对记录；中继无法伪造。撤销通知同样必须签名。
 
 ## 6. E2E 会话握手（连接级前向保密）
 
@@ -305,28 +335,37 @@ A(已运行)                             中继                         B(输入
 
 ```
 <data_dir>/
-  identity.json        # 身份密钥（0600）
-  peers.json           # PairRecord 列表
-  config.json          # relay_url, access_token, clipboard 策略, spool TTL 等
-  catalog.json         # 目录 CRDT 全量状态
-  local_index.json     # 本机持有的 entry_id → 本地路径/内容哈希
-  vault_keys.json      # 云端暂存对象密钥
-  spool/               # 待发消息（离线补发）
-  incoming/            # 接收中的 .part 与已收文件
+  identity.json            # 身份密钥（0600）
+  peers.json               # PairRecord 列表（含 last_seen_ms）
+  pending_revocations.json # 待投递的签名解除配对通知（离线重试）
+  config.json              # relay_url, access_token, clipboard 策略, spool TTL, update 配置等
+  catalog.json             # 目录 CRDT 全量状态
+  local_index.json         # 本机持有的 entry_id → 本地路径/内容哈希
+  vault_keys.json          # 云端暂存对象密钥
+  spool/                   # 待发消息（离线补发）
+  incoming/                # 接收中的 .part 与已收文件
   logs/
 ```
 
 ### 8.2 连接状态机
 
-`Disconnected → Connecting → Authenticated → SessionsReady`；任何错误回到 `Disconnected` 并退避重连。重连成功后：`welcome` → 对每个在线已配对设备按规则建会话 → 会话建立后发 snapshot/have_list/spool。
+`Disconnected → Connecting → Authenticated → SessionsReady`；任何错误回到 `Disconnected` 并退避重连。重连成功后：`welcome` → 处理 `pending_revocations` → 上传本地待发撤销通知（`revocation_put`）→ 对每个在线已配对设备按规则建会话 → 会话建立后发 snapshot/have_list/spool。
 
 ### 8.3 投递与去重
 
-- 所有待发 PeerMessage 先写 spool（`{peer_id, kind, payload, created_at, ttl, seq}`），收到对方 ack 或发送成功且对端在线后才删除？v0.1 简化：发送成功即删；重连后重发 snapshot/have_list 补齐。
+- 所有待发 PeerMessage 先写 spool（`{peer_id, kind, payload, created_at, ttl, seq}`），收到对方 ack 或发送成功且对端在线后才删除？原型简化：发送成功即删；重连后重发 snapshot/have_list 补齐。
 - 剪切板事件使用 `event_id` LRU 去重（接收端 256 条/5 分钟）。
 - 目录使用 CRDT 幂等合并，可安全重发。
+- 撤销通知：本地 `pending_revocations.json` 持久化，收到 `revocation_put_result{ok}` 才删除；离线/失败保留重试（上限 100 条、TTL 90 天）。收到的通知验签通过才执行删除，失败则忽略但记录日志。
+- 撤销售后：`revocation_ack` 必须在本地记录删除后发送；中继未收到 ack 时会再次投递（客户端按 notice_id 幂等处理）。
 
-### 8.4 多设备同时在线
+### 8.4 活跃期与心跳
+
+- `PairRecord.last_seen_ms` 在以下时机刷新：E2E 会话建立、收发任意 PeerMessage、收到 Pong。内存更新 + 每 60s/shutdown 原子写回 `peers.json`。
+- 会话空闲超过 6h 时发 `PeerMessage::Ping`，对端回 `Pong`，双向刷新活跃时间（避免"在线但不复制内容"被 90 天规则误判）。
+- 启动时 + 每 5min 检查：`now - last_seen > 90d` → 生成 `inactive_90d` 撤销通知（进待发队列）→ 删除本地 PairRecord → 清理会话/spool → 提示"配对因超过 90 天未活跃已失效，请重新配对"。
+
+### 8.5 多设备同时在线
 
 - 每对设备独立会话；同一剪切板事件广播给所有在线已配对设备。
 - 避免 A→B→C 中继式泛洪：只发送本机产生的变化，不转发从别的设备收到的变化（由各设备直接与 origin 配对？不保证全连接：如果 A 与 B、B 与 C 配对但 A 与 C 未配对，则 B 不转发 → A、C 不同步）。**v0.1 规定：设备只与自己配对的设备同步；需要全互通请两两配对。** 生产增强可做受信任群组转发（带 origin_device + TTL 跳数）。
@@ -340,16 +379,20 @@ A(已运行)                             中继                         B(输入
 | 重放/乱序 | E2E `seq` 严格递增；剪切板 `event_id` LRU |
 | 中继伪造设备上线 | Hello Ed25519 签名 + device_id 一致性校验 |
 | 配对码暴力猜测 | 8 位数字 + 120s TTL + 失败即销毁登记 + 限流 |
-| 设备丢失 | 删除本地 PairRecord；生产支持远程撤销 + 密钥轮换 |
+| 设备丢失 | 删除本地 PairRecord（在线立即通知，离线经中继信箱最终送达）；90 天不活跃自动过期；生产支持远程撤销 + 密钥轮换 |
 | 云端暂存数据泄露 | 客户端加密，服务端无密钥；TTL 强制 30 天 |
 | 剪切板敏感内容外泄 | OS 层排除密码管理器 + 按设备/类型开关 + 暂停同步 |
 
 ## 10. 版本与错误码
 
-- `PROTOCOL_VERSION = 1`；`Welcome.v` 与 `Hello.v` 不一致时拒绝连接。
-- v0.1.1 起 `PeerMessage` 新增 `pair_revoked`（加性变更；同版本客户端互通无影响，旧版本客户端收到会视为未知消息并忽略该条）。
-- 配对记录本身**没有版本/过期语义**：升级不改变配对有效性；协议版本只在连接握手时校验。
-- 错误码（`error` 与 `pair_result`/`vault_*` 的 message 中）：
+- `PROTOCOL_VERSION = 2`；`Welcome.v` 与 `Hello.v` 不一致时拒绝连接（中继会要求双方一起升级）。
+- v1 → v2 变更：
+  - 新增离线解除配对通知：`revocation_put` / `revocation_ack` / `pending_revocations` / `revocation_put_result`（见 §4.5）；
+  - `PairRecord` 新增 `last_seen_ms`，实施 90 天不活跃配对过期（见 §5.1/§8.4）；
+  - 撤销通知带签名（`revocation` 消息），中继可持久化控制面元数据但无法伪造。
+- v2 为不兼容升级：旧版 v1 客户端连接新中继会收到 `bad_version`；需升级全部设备与中继。
+- 配对记录**不会因版本升级而失效**（仅受 90 天活跃期与显式撤销约束）；协议版本只在连接握手时校验。
+- 错误码（`error` 与 `pair_result`/`vault_*`/`revocation_*` 的 message 中）：
 
 | code | 含义 |
 |---|---|
@@ -361,30 +404,37 @@ A(已运行)                             中继                         B(输入
 | `payload_too_large` | 帧或对象超限 |
 | `vault_quota_exceeded` | 暂存配额不足 |
 | `vault_expired` / `vault_not_found` | 对象不存在或已过期 |
+| `revocation_invalid` | 撤销通知验签失败/来源不符/已过期 |
+| `revocation_quota_exceeded` | 撤销通知存储配额不足 |
+| `data_dir_unavailable` | 中继控制面状态目录不可用（撤销信箱） |
 | `protocol_error` | 非法消息 |
 
-## 11. 实现契约（v0.1 原型）
+## 11. 实现契约（v0.2）
 
 | crate | 职责 | 负责人 |
 |---|---|---|
-| `drive-core` | 身份、密码学、配对、会话、wire 类型、目录 CRDT、传输清单、剪切板载荷（**已完成，视为冻结接口**） | Lead |
-| `drive-relay` (lib + bin) | WS 中继：Hello 认证、presence、配对路由、转发、暂存 + TTL 清理、`/healthz`、指标日志 | server-impl 队友 |
-| `drive-client` | `Store` 本地持久化、`Engine` 同步状态机（会话管理、剪切板去重、目录同步、传输收发、spool）、`net` WS 客户端 | client-impl 队友 |
-| `drive-cli` | `drive-sync` 命令：`init/pair/daemon/status/catalog/relay/vault`；Windows/Linux 剪切板后端（arboard + 变更检测）；文件模式（测试用） | client-impl 队友 |
+| `drive-core` | 身份、密码学、配对、会话、wire 类型、目录 CRDT、传输清单、剪切板载荷、撤销通知（**已完成，视为冻结接口**） | Lead |
+| `drive-relay` (lib + bin) | WS 中继：Hello 认证、presence、配对路由、密文转发、暂存 + TTL 清理、撤销通知离线信箱、`/healthz`、指标日志 | server-impl 队友 |
+| `drive-client` | `Store` 本地持久化、`Engine` 同步状态机（会话管理、剪切板去重、目录同步、传输收发、spool、撤销队列、90 天活跃期） | client-impl 队友 |
+| `drive-cli` | `drive-sync` 命令：`init/pair/daemon/status/peers/catalog/vault/update`；Windows/Linux 剪切板后端（arboard + 变更检测）；文件模式（测试用） | client-impl / updater-ci |
+| `drive-updater` | 自动更新：签名清单校验、下载、BLAKE3 校验、自替换安装、`sign-manifest` | updater-ci 队友 |
 | `drive-e2e` | 端到端测试（进程内中继 + 双客户端）、延迟基准 `drive-bench`、演示脚本 | qa 队友 |
+| `drive-mobile` + `mobile/android` / `mobile/ios` | 移动端 FFI 与原型 App（Android 可侧载；iOS 模拟器构建） | android-impl / ios-impl |
 
 实现要求：
 
 1. 不得修改 `drive-core` 公开类型/语义，除非同步更新本文档并由 Lead 确认（接口冻结，避免并行冲突）。
-2. 中继不得落盘任何转发内容；暂存只存密文；日志禁止打印内容/文件名/access_token。
+2. 中继不得落盘任何转发内容；暂存只存密文；撤销通知只存控制面元数据；日志禁止打印内容/文件名/access_token/签名。
 3. 客户端所有内容发送前必须经 E2E 会话加密；未建立会话时排队，不得明文发送。
 4. 错误处理：协议错误记录日志并断开/重建会话，不得 panic。
-5. 测试：中继/核心逻辑单测；端到端测试覆盖 配对→剪切板同步→目录同步→文件传输→暂存 TTL 删除→断线重连。
+5. 测试：中继/核心逻辑单测；端到端测试覆盖 配对→剪切板同步→目录同步→文件传输→暂存 TTL 删除→断线重连→撤销（在线/离线）→90 天过期。
+6. 发布：GitHub Actions 产出 Windows/Linux/macOS 桌面产物 + Android APK + iOS 模拟器包；自动更新清单签名。
 
-## 12. 待补充（v0.2+）
+## 12. 待补充（v0.3+）
 
 - 局域网直连：mDNS 发现、QUIC 传输、同 LAN 延迟目标 < 10ms、加密会话复用（同一 E2E 会话可跑在两个 transport 上，按 `event_id` 去重）。
-- 移动端推送（FCM/APNs）触发的"拉取式"同步（见 docs/platform-mobile.md）。
-- 群组/多用户、设备撤销、密钥轮换、后量子混合密钥交换。
+- 移动端系统推送（FCM/APNs）触发的"拉取式"同步（当前 Android/iOS 仅前台连接；见 docs/platform-mobile.md）。
+- 群组/多用户、远程设备撤销广播与密钥轮换、后量子混合密钥交换。
 - 二进制帧/CBOR 编码（替代 JSON+base64），吞吐提升约 30-40%。
 - 大对象云端暂存改为 HTTP 流式上传/下载（预签名、分片、断点续传）。
+- 自动更新通道灰度/回滚（当前：GitHub Releases + 签名清单，手动重启生效）。

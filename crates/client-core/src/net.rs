@@ -1,4 +1,4 @@
-﻿//! WebSocket 客户端：连接中继、Hello 认证、消息收发、WS Ping 心跳。
+//! WebSocket 客户端：连接中继、Hello 认证、消息收发、WS Ping 心跳。
 //!
 //! 只处理"一条连接"的生命周期；自动重连/退避在 [`crate::runtime`] 里。
 //! wss:// 需要启用本 crate 的 `tls` feature（映射到 tokio-tungstenite 的
@@ -197,11 +197,7 @@ impl Connection {
         loop {
             match self.ws.next().await {
                 Some(Ok(Message::Text(text))) => {
-                    return Some(
-                        ServerToClient::from_json(&text)
-                            .context("解析中继消息失败")
-                            .map_err(|e| e),
-                    );
+                    return Some(ServerToClient::from_json(&text).context("解析中继消息失败"));
                 }
                 Some(Ok(Message::Ping(payload))) => {
                     let _ = self.ws.send(Message::Pong(payload)).await;
@@ -240,7 +236,10 @@ mod tests {
 
     #[test]
     fn normalize_relay_url_variants() {
-        assert_eq!(normalize_relay_url("127.0.0.1:8787"), "ws://127.0.0.1:8787/ws");
+        assert_eq!(
+            normalize_relay_url("127.0.0.1:8787"),
+            "ws://127.0.0.1:8787/ws"
+        );
         assert_eq!(
             normalize_relay_url("ws://example.com:8787"),
             "ws://example.com:8787/ws"

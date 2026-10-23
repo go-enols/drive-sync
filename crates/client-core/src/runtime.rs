@@ -1,4 +1,4 @@
-﻿//! 异步运行时：连接循环（自动重连退避 1s→30s ±20% 抖动）+ Engine + WS 心跳（30s）。
+//! 异步运行时：连接循环（自动重连退避 1s→30s ±20% 抖动）+ Engine + WS 心跳（30s）。
 //!
 //! 对外提供 [`Runtime`]（消费式 `run()`）与可克隆的 [`RuntimeHandle`]（注入本机剪切板变化、
 //! 目录操作、主动拉取、优雅关闭）。CLI daemon 与 e2e 测试都复用它。
@@ -13,9 +13,7 @@ use drive_core::clipboard::ClipboardPayload;
 use drive_core::identity::Identity;
 use tokio::sync::{mpsc, watch};
 
-use crate::engine::{
-    CatalogAddParams, Engine, EngineOutput, RuntimeCommand, RuntimeEvent,
-};
+use crate::engine::{CatalogAddParams, Engine, EngineOutput, RuntimeCommand, RuntimeEvent};
 use crate::net::Connection;
 use crate::store::Store;
 use crate::util::{backoff_delay, now_ms};
@@ -58,7 +56,9 @@ impl OutboundPacer {
             return;
         }
         let now = tokio::time::Instant::now();
-        let elapsed = now.saturating_duration_since(self.last_refill).as_secs_f64();
+        let elapsed = now
+            .saturating_duration_since(self.last_refill)
+            .as_secs_f64();
         self.last_refill = now;
         self.tokens = (self.tokens + elapsed * self.rate_per_sec).min(self.capacity);
     }
@@ -171,7 +171,14 @@ impl std::fmt::Debug for RuntimeConfig {
         f.debug_struct("RuntimeConfig")
             .field("data_dir", &self.data_dir)
             .field("relay_url", &self.relay_url)
-            .field("access_token", &if self.access_token.is_empty() { "（空）" } else { "已配置" })
+            .field(
+                "access_token",
+                &if self.access_token.is_empty() {
+                    "（空）"
+                } else {
+                    "已配置"
+                },
+            )
             .field("device_name", &self.device_name)
             .finish()
     }

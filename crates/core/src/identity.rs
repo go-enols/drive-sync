@@ -128,7 +128,9 @@ impl Identity {
 
     /// 与对端做 X25519 密钥交换（返回 32 字节共享秘密）。
     pub fn diffie_hellman(&self, peer_x_public: &[u8; 32]) -> [u8; 32] {
-        self.x.diffie_hellman(&XPublicKey::from(*peer_x_public)).to_bytes()
+        self.x
+            .diffie_hellman(&XPublicKey::from(*peer_x_public))
+            .to_bytes()
     }
 }
 

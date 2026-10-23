@@ -1,4 +1,4 @@
-﻿//! 阶段 2 端到端：vault put → 会话建立时经 E2E `vault_share` 共享密钥 → 对端拉取解密。
+//! 阶段 2 端到端：vault put → 会话建立时经 E2E `vault_share` 共享密钥 → 对端拉取解密。
 //!
 //! 覆盖：
 //! 1. A `vault_put`（客户端加密，服务端只存密文；TTL clamp 到 ≥60s）；
@@ -23,10 +23,7 @@ const VAULT_FILE_SIZE: usize = 96 * 1024;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vault_put_share_and_get_decrypt_on_peer() -> Result<()> {
     let root = TempDir::new()?;
-    let relay = start_relay(relay_config(Some(
-        root.path().join("relay-vault"),
-    )))
-    .await?;
+    let relay = start_relay(relay_config(Some(root.path().join("relay-vault")))).await?;
     let url = relay.ws_url();
     let dir_a = root.path().join("device-a");
     let dir_b = root.path().join("device-b");
@@ -80,7 +77,11 @@ async fn vault_put_share_and_get_decrypt_on_peer() -> Result<()> {
     )
     .await
     .context("B 解密下载 vault 对象失败")?;
-    assert_eq!(file_blake3(&restored_b)?, src_hash, "B 解密内容 BLAKE3 不一致");
+    assert_eq!(
+        file_blake3(&restored_b)?,
+        src_hash,
+        "B 解密内容 BLAKE3 不一致"
+    );
     assert_eq!(
         std::fs::read(&restored_b)?,
         std::fs::read(&src)?,
@@ -99,7 +100,10 @@ async fn vault_put_share_and_get_decrypt_on_peer() -> Result<()> {
 
     // 4) vault_list 只列本设备对象：A 可见，B 为空（跨设备 get 由 object_id + 共享密钥完成）。
     let list_a = drive_client::vault_list(&config_a).await?;
-    if !list_a.iter().any(|object| object.object_id == put.object_id) {
+    if !list_a
+        .iter()
+        .any(|object| object.object_id == put.object_id)
+    {
         bail!("A 的 vault_list 应包含刚上传的对象: {list_a:?}");
     }
     let list_b = drive_client::vault_list(&config_b).await?;

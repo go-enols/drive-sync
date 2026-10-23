@@ -1,4 +1,4 @@
-﻿//! Engine 单元测试：用内存"模拟中继"驱动两个真实 Engine 实例，
+//! Engine 单元测试：用内存"模拟中继"驱动两个真实 Engine 实例，
 //! 覆盖剪切板回环抑制、事件去重、离线 spool 重发、目录合并/持久化、传输断点续传。
 
 use std::collections::VecDeque;
@@ -53,24 +53,31 @@ impl Harness {
         let dir_b = TempDir::new().expect("创建临时目录");
         let store_a = Arc::new(Store::open(dir_a.path()).expect("打开 store A"));
         let store_b = Arc::new(Store::open(dir_b.path()).expect("打开 store B"));
-        let (identity_a, _) = store_a.load_or_create_identity("设备A").expect("创建身份 A");
-        let (identity_b, _) = store_b.load_or_create_identity("设备B").expect("创建身份 B");
+        let (identity_a, _) = store_a
+            .load_or_create_identity("设备A")
+            .expect("创建身份 A");
+        let (identity_b, _) = store_b
+            .load_or_create_identity("设备B")
+            .expect("创建身份 B");
+        let now = now_ms();
 
         let record_for_a = PairRecord {
             v: PAIRING_VERSION,
             peer: identity_b.public(),
             relay_url: "ws://test/ws".into(),
-            paired_at_ms: 1,
+            paired_at_ms: now,
             label: "设备B".into(),
             pairing_fingerprint: "fp-test".into(),
+            last_seen_ms: now,
         };
         let record_for_b = PairRecord {
             v: PAIRING_VERSION,
             peer: identity_a.public(),
             relay_url: "ws://test/ws".into(),
-            paired_at_ms: 1,
+            paired_at_ms: now,
             label: "设备A".into(),
             pairing_fingerprint: "fp-test".into(),
+            last_seen_ms: now,
         };
         store_a.upsert_peer(record_for_a).expect("写入配对 A");
         store_b.upsert_peer(record_for_b).expect("写入配对 B");
@@ -131,11 +138,7 @@ impl Harness {
         self.settle(queue)
     }
 
-    fn queue_from(
-        &self,
-        from: Side,
-        output: EngineOutput,
-    ) -> VecDeque<(Side, ClientToServer)> {
+    fn queue_from(&self, from: Side, output: EngineOutput) -> VecDeque<(Side, ClientToServer)> {
         output
             .outbound
             .into_iter()
@@ -327,7 +330,10 @@ fn clipboard_sync_and_loopback_suppressed() {
     let output = harness.b.on_tick(now_ms() + 700);
     let settled = harness.pump(Side::B, output);
     assert_eq!(settled.applied_a.len(), 1);
-    assert_eq!(settled.applied_a[0].as_text().expect("文本"), "second message");
+    assert_eq!(
+        settled.applied_a[0].as_text().expect("文本"),
+        "second message"
+    );
 }
 
 #[test]
@@ -345,15 +351,21 @@ fn clipboard_event_dedupe_and_origin_filter() {
 
     // 正常事件应用一次。
     let event = clipboard_event("e1", &harness.a_id, &payload);
-    let output = harness
-        .b
-        .handle_peer_message(&harness.a_id, PeerMessage::Clipboard { event: event.clone() });
+    let output = harness.b.handle_peer_message(
+        &harness.a_id,
+        PeerMessage::Clipboard {
+            event: event.clone(),
+        },
+    );
     assert_eq!(output.applied_clipboard.len(), 1);
 
     // 同一 event_id 重复投递 → 幂等，不再应用。
-    let output = harness
-        .b
-        .handle_peer_message(&harness.a_id, PeerMessage::Clipboard { event: event.clone() });
+    let output = harness.b.handle_peer_message(
+        &harness.a_id,
+        PeerMessage::Clipboard {
+            event: event.clone(),
+        },
+    );
     assert!(output.applied_clipboard.is_empty());
 
     // 同样内容的新 event_id（回环场景）→ recent_applied 命中，不再应用。
@@ -378,7 +390,10 @@ fn clipboard_tampered_payload_rejected() {
         .b
         .handle_peer_message(&harness.a_id, PeerMessage::Clipboard { event });
     assert!(output.applied_clipboard.is_empty());
-    assert!(output.events.iter().any(|event| matches!(event, RuntimeEvent::Error { .. })));
+    assert!(output
+        .events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::Error { .. })));
 }
 
 #[test]
@@ -400,10 +415,10 @@ fn offline_clipboard_events_are_spooled_and_replayed_in_order() {
     assert_eq!(settled.applied_b[0].as_text().expect("文本"), "first");
     assert_eq!(settled.applied_b[1].as_text().expect("文本"), "second");
     assert_eq!(settled.applied_b[2].as_text().expect("文本"), "third");
-    assert!(settled.events_a.iter().any(|event| matches!(
-        event,
-        RuntimeEvent::SpoolReplayed { count: 3, .. }
-    )));
+    assert!(settled
+        .events_a
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::SpoolReplayed { count: 3, .. })));
 }
 
 #[test]
@@ -412,7 +427,10 @@ fn catalog_add_merges_persists_and_delete_propagates() {
     harness.handshake();
 
     let (entry, _file_dir) = harness.add_file("tool.zip", b"fake installer content");
-    assert!(harness.b.catalog().get(&entry.id).is_some(), "B 应合并到条目");
+    assert!(
+        harness.b.catalog().get(&entry.id).is_some(),
+        "B 应合并到条目"
+    );
 
     // B 的目录已持久化，可被新 Engine 重新加载。
     let store_b = harness.b.store().clone();
@@ -446,10 +464,9 @@ fn catalog_add_merges_persists_and_delete_propagates() {
             .unwrap_or(false),
         "B 应保留墓碑"
     );
-    assert!(settled
-        .events_b
-        .iter()
-        .any(|event| matches!(event, RuntimeEvent::CatalogMerged { applied, .. } if *applied >= 1)));
+    assert!(settled.events_b.iter().any(
+        |event| matches!(event, RuntimeEvent::CatalogMerged { applied, .. } if *applied >= 1)
+    ));
 
     // 重新加载后墓碑仍在（离线设备重连不会复活条目）。
     let (catalog_on_disk, _) = store_b.load_catalog().expect("读取目录");
@@ -490,7 +507,9 @@ fn transfer_resumes_from_partial_file() {
     harness.handshake();
 
     // 6 MiB / 64 KiB = 96 块，超过 32 块发送窗口，便于制造"传一半断线"。
-    let data: Vec<u8> = (0..6 * 1024 * 1024).map(|index| (index % 251) as u8).collect();
+    let data: Vec<u8> = (0..6 * 1024 * 1024)
+        .map(|index| (index % 251) as u8)
+        .collect();
     let (entry, _file_dir) = harness.add_file("big.bin", &data);
 
     // B 请求 → A 报价 → B 接受 → A 发送满窗口 32 块。
@@ -655,9 +674,10 @@ impl MultiHarness {
             v: PAIRING_VERSION,
             peer,
             relay_url: "ws://test/ws".into(),
-            paired_at_ms: 1,
+            paired_at_ms: now_ms(),
             label: "peer".into(),
             pairing_fingerprint: "fp-multi".into(),
+            last_seen_ms: now_ms(),
         };
         // A(0) <-> B(1)、A(0) <-> C(2)
         for other in [1usize, 2] {
@@ -671,9 +691,14 @@ impl MultiHarness {
         let engines: Vec<Engine> = identities
             .into_iter()
             .enumerate()
-            .map(|(index, identity)| Engine::new(stores[index].clone(), identity).expect("创建 engine"))
+            .map(|(index, identity)| {
+                Engine::new(stores[index].clone(), identity).expect("创建 engine")
+            })
             .collect();
-        let ids: Vec<String> = engines.iter().map(|engine| engine.self_id().to_string()).collect();
+        let ids: Vec<String> = engines
+            .iter()
+            .map(|engine| engine.self_id().to_string())
+            .collect();
         Self {
             engines,
             ids,
@@ -685,11 +710,7 @@ impl MultiHarness {
         self.ids.iter().position(|id| id == device_id)
     }
 
-    fn convert(
-        &self,
-        from: usize,
-        message: ClientToServer,
-    ) -> Option<(usize, ServerToClient)> {
+    fn convert(&self, from: usize, message: ClientToServer) -> Option<(usize, ServerToClient)> {
         let from_id = self.ids[from].clone();
         match message {
             ClientToServer::SessionInit { to, msg } => Some((
@@ -730,7 +751,12 @@ impl MultiHarness {
         settled
     }
 
-    fn enqueue(&mut self, from: usize, output: EngineOutput, queue: &mut VecDeque<(usize, ServerToClient)>) {
+    fn enqueue(
+        &mut self,
+        from: usize,
+        output: EngineOutput,
+        queue: &mut VecDeque<(usize, ServerToClient)>,
+    ) {
         for reply in output.outbound {
             if let Some((target, server)) = self.convert(from, reply) {
                 queue.push_back((target, server));
@@ -746,11 +772,11 @@ impl MultiHarness {
         ];
         let mut settled = MultiSettled::new(self.engines.len());
         let mut queue = VecDeque::new();
-        for index in 0..self.engines.len() {
+        for (index, peers_online) in online.iter().enumerate() {
             let info = ConnectionInfo {
                 device_id: self.ids[index].clone(),
                 session_id: format!("relay-{index}"),
-                online: online[index].clone(),
+                online: peers_online.clone(),
                 server_time_ms: 0,
             };
             let output = self.engines[index].on_authenticated(&info);
@@ -777,7 +803,11 @@ impl MultiHarness {
 fn concurrent_fetch_same_entry_from_two_peers() {
     let mut harness = MultiHarness::new();
     harness.handshake();
-    assert_eq!(harness.engines[0].sessions().len(), 2, "A 应分别与 B、C 建会话");
+    assert_eq!(
+        harness.engines[0].sessions().len(),
+        2,
+        "A 应分别与 B、C 建会话"
+    );
 
     // A 本地持有 1 MiB 文件并加入目录。
     let file_dir = TempDir::new().expect("临时文件目录");
@@ -938,13 +968,10 @@ fn external_peer_removal_revokes_and_cleans_state() {
         "应在销毁会话前经现有会话尽力发送 PairRevoked"
     );
     assert!(
-        output.events.iter().any(|event| matches!(
-            event,
-            RuntimeEvent::PeerRevoked {
-                notified: true,
-                ..
-            }
-        )),
+        output
+            .events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::PeerRevoked { notified: true, .. })),
         "应 emit PeerRevoked 且 notified=true"
     );
     let settled = harness.pump(Side::A, output);
@@ -958,7 +985,12 @@ fn external_peer_removal_revokes_and_cleans_state() {
     assert!(harness.b.peers().is_empty(), "B 的配对记录应被删除");
     assert!(harness.b.sessions().is_empty(), "B 的会话应被销毁");
     assert!(
-        harness.b.store().load_peers().expect("读取 peers").is_empty(),
+        harness
+            .b
+            .store()
+            .load_peers()
+            .expect("读取 peers")
+            .is_empty(),
         "B 的 peers.json 应已更新"
     );
     assert!(settled
@@ -1009,8 +1041,11 @@ fn receiving_pair_revoked_deletes_local_record_and_rejects_session() {
         .is_empty());
 
     // 撤销后收到原对端的 session_init：无配对记录 → 拒绝，不建会话。
-    let init = create_session_init(&harness.a.identity().clone(), &harness.b.identity().public())
-        .expect("创建 init");
+    let init = create_session_init(
+        &harness.a.identity().clone(),
+        &harness.b.identity().public(),
+    )
+    .expect("创建 init");
     let rejected = harness.b.handle_server(ServerToClient::SessionInit {
         from: harness.a_id.clone(),
         msg: init.msg,
@@ -1022,4 +1057,206 @@ fn receiving_pair_revoked_deletes_local_record_and_rejects_session() {
         .any(|event| matches!(event, RuntimeEvent::Error { .. })));
 }
 
+// ---------------------------------------------------------------------------
+// 离线撤销通知 + 90 天不活跃过期 + 心跳/touch
+// ---------------------------------------------------------------------------
 
+#[test]
+fn pending_revocation_is_sent_on_tick_and_removed_after_ack() {
+    let mut harness = Harness::new();
+    harness.handshake();
+    let now = now_ms();
+    let notice = RevocationNotice::create(
+        &harness.a.identity().clone(),
+        &harness.b_id,
+        revocation_reason::INACTIVE_90D,
+        now,
+    )
+    .expect("创建撤销通知");
+    let notice_id = notice.notice_id().to_string();
+    // CLI 写入本地待发队列（模拟 daemon 启动前/外部进程写入）。
+    harness
+        .a
+        .store()
+        .queue_revocation(&notice)
+        .expect("写入待发队列");
+
+    // 2s 周期：重新加载队列并通过 revocation_put 投递。
+    let output = harness.a.on_tick(now + 2_500);
+    assert!(
+        output.outbound.iter().any(|message| matches!(
+            message,
+            ClientToServer::RevocationPut { notice } if notice.notice_id() == notice_id
+        )),
+        "应把待发撤销通知通过 revocation_put 投递"
+    );
+    assert_eq!(harness.a.pending_revocation_count(), 1);
+
+    // 中继回执 ok → 从队列/内存删除。
+    let ack = harness
+        .a
+        .handle_server(ServerToClient::RevocationPutResult {
+            ok: true,
+            notice_id: notice_id.clone(),
+            message: "ok".into(),
+        });
+    assert!(harness
+        .a
+        .store()
+        .take_pending_revocations()
+        .expect("读取队列")
+        .is_empty());
+    assert_eq!(harness.a.pending_revocation_count(), 0);
+    assert!(ack
+        .events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::RevocationDelivered { .. })));
+}
+
+#[test]
+fn pending_revocations_from_relay_verified_and_acked() {
+    let mut harness = Harness::new();
+    harness.handshake();
+    let notice = RevocationNotice::create(
+        &harness.a.identity().clone(),
+        &harness.b_id,
+        revocation_reason::USER_REMOVED,
+        now_ms(),
+    )
+    .expect("创建撤销通知");
+    let notice_id = notice.notice_id().to_string();
+
+    let output = harness.b.handle_server(ServerToClient::PendingRevocations {
+        notices: vec![notice],
+    });
+    // 验签通过：删除本地记录、销毁会话、清理，并 ack。
+    assert!(harness.b.peers().is_empty());
+    assert!(harness.b.store().load_peers().expect("peers").is_empty());
+    assert!(harness.b.sessions().is_empty());
+    assert!(output
+        .events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::PeerRevocationNotice { .. })));
+    assert!(output.outbound.iter().any(|message| matches!(
+        message,
+        ClientToServer::RevocationAck { notice_id: ack_id } if ack_id == &notice_id
+    )));
+}
+
+#[test]
+fn pending_revocation_bad_signature_keeps_record() {
+    let mut harness = Harness::new();
+    harness.handshake();
+    // 伪造：用 evil 身份签名，再把 from 改成 A（签名与内容不再匹配）。
+    let evil = drive_core::identity::Identity::generate("evil");
+    let mut notice = RevocationNotice::create(
+        &evil,
+        &harness.b_id,
+        revocation_reason::USER_REMOVED,
+        now_ms(),
+    )
+    .expect("创建通知");
+    notice.content.from = harness.a_id.clone();
+
+    let output = harness.b.handle_server(ServerToClient::PendingRevocations {
+        notices: vec![notice],
+    });
+    assert_eq!(harness.b.peers().len(), 1, "验签失败不得删除本地记录");
+    assert!(harness.b.sessions().len() == 1);
+    assert!(
+        !output
+            .outbound
+            .iter()
+            .any(|message| matches!(message, ClientToServer::RevocationAck { .. })),
+        "验签失败不应 ack（保留中继信箱条目以便审计/过期清理）"
+    );
+    assert!(output
+        .events
+        .iter()
+        .any(|event| matches!(event, RuntimeEvent::Error { .. })));
+}
+
+#[test]
+fn inactive_pair_expires_with_revocation_notice_and_cleanup() {
+    let mut harness = Harness::new();
+    harness.handshake();
+    let now = now_ms();
+    // 直接构造旧 last_seen：91 天前（内存态，触发周期检查）。
+    harness.a.peers[0].last_seen_ms = now - drive_core::pairing::INACTIVE_PAIR_EXPIRY_MS - 60_000;
+
+    let output = harness
+        .a
+        .on_tick(now + INACTIVE_PAIR_CHECK_INTERVAL_MS + 1_000);
+    assert!(harness.a.peers().is_empty(), "过期配对应被删除");
+    assert!(harness.a.store().load_peers().expect("peers").is_empty());
+    assert!(harness.a.sessions().is_empty(), "过期配对的会话应销毁");
+    assert!(output.events.iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PeerExpired {
+            device_id, ..
+        } if device_id == &harness.b_id
+    )));
+    // 生成了 inactive_90d 离线撤销通知，并尝试立即投递。
+    let pending = harness
+        .a
+        .store()
+        .take_pending_revocations()
+        .expect("读取队列");
+    assert!(pending.iter().any(|notice| {
+        notice.content.to == harness.b_id
+            && notice.content.reason == revocation_reason::INACTIVE_90D
+    }));
+    assert!(output
+        .outbound
+        .iter()
+        .any(|message| matches!(message, ClientToServer::RevocationPut { .. })));
+}
+
+#[test]
+fn peer_activity_touches_last_seen_and_flushes_to_disk() {
+    let mut harness = Harness::new();
+    harness.handshake();
+    let now = now_ms();
+    // 人为把 A 端记录的活跃时间归零，验证收到消息后会刷新。
+    harness.a.peers[0].last_seen_ms = 0;
+
+    // 收到 Ping → 回 Pong 并 touch。
+    let output = harness
+        .a
+        .handle_peer_message(&harness.b_id.clone(), PeerMessage::Ping { ts_ms: now });
+    assert!(output
+        .outbound
+        .iter()
+        .any(|message| matches!(message, ClientToServer::Relay { .. })));
+    assert!(
+        harness.a.peers[0].last_seen_ms > 0,
+        "收到消息应刷新 last_seen"
+    );
+
+    // 60s 后落盘。
+    let _ = harness.a.on_tick(now + LAST_SEEN_FLUSH_INTERVAL_MS + 1_000);
+    let persisted = harness.a.store().load_peers().expect("读取 peers");
+    assert!(
+        persisted[0].last_seen_ms > 0,
+        "last_seen 应定期 flush 到 peers.json"
+    );
+}
+
+#[test]
+fn idle_session_sends_heartbeat_ping_and_refreshes_last_seen() {
+    let mut harness = Harness::new();
+    harness.handshake();
+    let now = now_ms();
+    // A 端记录空闲 7h（未到 90 天过期）。
+    harness.a.peers[0].last_seen_ms = now - HEARTBEAT_IDLE_MS - 60_000;
+
+    let output = harness.a.on_tick(now + HEARTBEAT_CHECK_INTERVAL_MS + 1_000);
+    assert!(!output.outbound.is_empty(), "空闲超过 6h 应发送心跳 Ping");
+
+    // 经"中继"送达 B：B 回 Pong；A 收到 Pong 后 touch。
+    let _settled = harness.pump(Side::A, output);
+    assert!(
+        harness.a.peers[0].last_seen_ms >= now,
+        "Ping/Pong 心跳应刷新 last_seen"
+    );
+}

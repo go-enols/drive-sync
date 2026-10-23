@@ -1,4 +1,4 @@
-﻿//! 中继共享状态：在线设备表、配对登记表、失败限流、可选暂存。
+//! 中继共享状态：在线设备表、配对登记表、失败限流、可选暂存。
 //!
 //! 并发模型：每个连接一个读任务（+ 一个写任务），共享状态用 `Arc<RelayState>`，
 //! 在线表用 `RwLock`、配对表用 `Mutex`，跨连接投递用每条连接的有界 `mpsc`。
@@ -12,6 +12,7 @@ use tokio::sync::{mpsc, watch, Mutex, RwLock};
 
 use crate::pair::PairRegistry;
 use crate::ratelimit::JoinLimiter;
+use crate::revocation::RevocationStore;
 use crate::vault::VaultStore;
 use crate::RelayConfig;
 
@@ -22,10 +23,7 @@ use crate::RelayConfig;
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum OutMsg {
     Json(ServerToClient),
-    Close {
-        code: u16,
-        reason: &'static str,
-    },
+    Close { code: u16, reason: &'static str },
 }
 
 /// 一条已认证连接的可投递句柄。
@@ -44,18 +42,25 @@ pub(crate) struct RelayState {
     pub(crate) pairs: Mutex<PairRegistry>,
     pub(crate) join_limiter: JoinLimiter,
     pub(crate) vault: Option<VaultStore>,
+    /// 撤销通知离线信箱（`<data_dir>/revocations/`）。
+    pub(crate) revocations: RevocationStore,
     /// 关停广播：置为 `true` 后所有在线连接任务应发 Close(1001) 并退出。
     shutdown: watch::Sender<bool>,
 }
 
 impl RelayState {
-    pub(crate) fn new(config: RelayConfig, vault: Option<VaultStore>) -> Arc<Self> {
+    pub(crate) fn new(
+        config: RelayConfig,
+        vault: Option<VaultStore>,
+        revocations: RevocationStore,
+    ) -> Arc<Self> {
         let pair_ttl = Duration::from_secs(config.pair_ttl_secs.max(1));
         let (shutdown, _) = watch::channel(false);
         Arc::new(Self {
             join_limiter: JoinLimiter::new(config.pair_join_limit_per_min),
             pairs: Mutex::new(PairRegistry::new(pair_ttl)),
             vault,
+            revocations,
             peers: RwLock::new(HashMap::new()),
             shutdown,
             config: Arc::new(config),
@@ -154,10 +159,6 @@ pub(crate) fn try_send_error(tx: &mpsc::Sender<OutMsg>, code: &str, message: &st
     )
 }
 
-pub(crate) fn try_send_close(
-    tx: &mpsc::Sender<OutMsg>,
-    code: u16,
-    reason: &'static str,
-) -> bool {
+pub(crate) fn try_send_close(tx: &mpsc::Sender<OutMsg>, code: u16, reason: &'static str) -> bool {
     tx.try_send(OutMsg::Close { code, reason }).is_ok()
 }

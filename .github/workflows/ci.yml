@@ -1,0 +1,108 @@
+# drive-sync CI：格式 / clippy / 测试 / release 构建
+#
+# 触发：push 到 main、所有 PR、手动 workflow_dispatch。
+# 说明：
+# - release 构建只编桌面端（cli/relay/updater），不含 e2e 测试 crate；
+# - e2e 测试单独串行执行（时序敏感，避免与并行测试抢端口/时序）；
+# - Linux 需要 arboard 的 xcb/wayland 依赖，ubuntu runner 默认没装。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # 自动更新清单地址（编译期 option_env!("DRIVE_UPDATE_URL")）。
+  DRIVE_UPDATE_URL: https://github.com/go-enols/drive-sync/releases/latest/download/latest.json
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rustfmt
+        run: rustup component add rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (-D warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux deps (arboard)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev
+      - name: Install clippy
+        run: rustup component add clippy
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux deps (arboard)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev
+      - name: Test (unit + integration，e2e 除外)
+        run: cargo test --workspace --exclude drive-e2e
+      - name: Test e2e（串行，避免时序敏感用例互相干扰）
+        run: cargo test -p drive-e2e -- --test-threads=1
+
+  build:
+    name: release build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux deps (arboard)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libwayland-dev
+      - name: Build release binaries
+        run: |
+          # 发布产物启用 tls feature（可连 wss:// 中继）；与 release.yml 保持一致。
+          cargo build --release --locked -p drive-cli -p drive-relay -p drive-updater --bins \
+            --features drive-cli/tls
+      - name: Smoke check CLI help
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe() { if [[ -f "$1.exe" ]]; then echo "$1.exe"; else echo "$1"; fi; }
+          CLI=$(exe ./target/release/drive-sync)
+          "$CLI" update check --help
+          "$CLI" update apply --help
+          "$(exe ./target/release/sign-manifest)" --help
+          "$(exe ./target/release/gen-manifest)" --help

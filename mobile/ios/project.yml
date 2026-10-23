@@ -1,0 +1,91 @@
+# drive-sync iOS App — XcodeGen 工程定义
+#
+#   cd mobile/ios && xcodegen generate      # 生成 DriveSync.xcodeproj（不提交）
+#   open DriveSync.xcodeproj                # 用 Xcode 打开、选模拟器/真机运行
+#
+# Rust 静态库（drive-mobile）由 scripts/build-ffi.sh 或 CI 构建后放到：
+#   mobile/ios/ffi/iphoneos/libdrive_mobile.a        （真机 arm64）
+#   mobile/ios/ffi/iphonesimulator/libdrive_mobile.a （模拟器 arm64 + x86_64 fat）
+# 头文件来自 crates/mobile-core/include/drive_mobile.h（C ABI 契约，Android/iOS 共用）。
+#
+# 详细说明见 docs/mobile-ios.md。
+name: DriveSync
+
+options:
+  minimumXcodeGenVersion: "2.35"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  deploymentTarget:
+    iOS: "16.0"
+  bundleIdPrefix: dev.drivesync
+  xcodeVersion: "15.0"
+
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    SWIFT_VERSION: "5.0"
+    CLANG_ENABLE_MODULES: YES
+    ALWAYS_SEARCH_USER_PATHS: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+
+targets:
+  DriveSync:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: DriveSync
+        excludes:
+          - "Info.plist"
+          - "DriveSync-Bridging-Header.h"
+    settings:
+      base:
+        PRODUCT_NAME: DriveSync
+        PRODUCT_BUNDLE_IDENTIFIER: dev.drivesync.mobile
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: DriveSync/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_OBJC_BRIDGING_HEADER: DriveSync/DriveSync-Bridging-Header.h
+        # C ABI 头：来自 mobile-core 仓内头文件（ffi/include 为本机兜底目录）
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/../../crates/mobile-core/include"
+          - "$(SRCROOT)/ffi/include"
+        # Rust 静态库按平台目录选择：ffi/iphoneos（真机）/ ffi/iphonesimulator（模拟器）。
+        # 用 Xcode 内建的 $(PLATFORM_NAME) 展开，避免手写 sdk=... 条件设置。
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ffi/$(PLATFORM_NAME)"
+        # Rust staticlib + 它可能用到的系统库（rustls/ring 等）；无用时这些也不会有副作用
+        OTHER_LDFLAGS: "$(inherited) -ldrive_mobile -lc++ -lz -framework Security -framework CoreFoundation"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        SWIFT_EMIT_LOC_STRINGS: YES
+        ENABLE_BITCODE: NO
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG"
+          ONLY_ACTIVE_ARCH: YES
+        Release:
+          SWIFT_COMPILATION_MODE: wholemodule
+
+schemes:
+  DriveSync:
+    build:
+      targets:
+        DriveSync: all
+    run:
+      config: Debug
+    archive:
+      config: Release

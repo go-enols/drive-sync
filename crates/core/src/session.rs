@@ -1,4 +1,4 @@
-﻿//! E2E 会话：连接级前向保密（每次连接重新协商），身份由配对阶段的 Ed25519 公钥认证。
+//! E2E 会话：连接级前向保密（每次连接重新协商），身份由配对阶段的 Ed25519 公钥认证。
 //!
 //! 握手经中继转发（中继只看到公钥与签名，无法解密后续内容）：
 //! - 发起方 → 对端：`SessionInitMsg`（临时 X25519 公钥 + Ed25519 签名）
@@ -173,7 +173,9 @@ pub fn verify_session_init(msg: &SessionInitMsg, expected_peer: &PublicIdentity)
         return Err(CoreError::Verification("会话发起方不是已配对设备".into()));
     }
     if c.ed_public != expected_peer.ed_public {
-        return Err(CoreError::Verification("会话发起方 Ed25519 公钥不匹配".into()));
+        return Err(CoreError::Verification(
+            "会话发起方 Ed25519 公钥不匹配".into(),
+        ));
     }
     if !expected_peer.verify(&init_sign_input(c)?, &msg.signature) {
         return Err(CoreError::Verification("会话握手签名无效".into()));
@@ -348,9 +350,7 @@ fn ack_sign_input(init: &SessionInitContent, ack: &SessionAckContent) -> Result<
 pub fn session_init_summary(msg: &SessionInitMsg) -> String {
     format!(
         "{} → {} ({})",
-        msg.content.from,
-        msg.content.to,
-        &msg.content.session_id
+        msg.content.from, msg.content.to, &msg.content.session_id
     )
 }
 
@@ -374,6 +374,7 @@ mod tests {
             paired_at_ms: 1,
             label: "B".into(),
             pairing_fingerprint: "f".into(),
+            last_seen_ms: 1,
         };
         let rec_b = PairRecord {
             v: PAIRING_VERSION,
@@ -382,6 +383,7 @@ mod tests {
             paired_at_ms: 1,
             label: "A".into(),
             pairing_fingerprint: "f".into(),
+            last_seen_ms: 1,
         };
         (a, b, rec_a, rec_b)
     }

@@ -1,4 +1,4 @@
-﻿//! `catalog` 子命令：add / list / remove / fetch（一次性连接下载）。
+//! `catalog` 子命令：add / list / remove / fetch（一次性连接下载）。
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -67,6 +67,7 @@ pub async fn run(app: &App, command: CatalogCommand) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add(
     app: &App,
     path: PathBuf,
@@ -81,15 +82,11 @@ fn add(
     let identity = store.load_identity()?;
     let node = identity.device_id();
     let path = std::path::absolute(&path).unwrap_or(path);
-    let (size, content_hash) =
-        drive_client::util::hash_file(&path).with_context(|| {
-            format!("读取/计算文件哈希失败: {}", path.display())
-        })?;
+    let (size, content_hash) = drive_client::util::hash_file(&path)
+        .with_context(|| format!("读取/计算文件哈希失败: {}", path.display()))?;
     let platform = match platform {
         Some(text) => TargetPlatform::parse(&text).ok_or_else(|| {
-            anyhow::anyhow!(
-                "未知平台: {text}（可用 windows/linux/android/ios/macos/any）"
-            )
+            anyhow::anyhow!("未知平台: {text}（可用 windows/linux/android/ios/macos/any）")
         })?,
         None => drive_client::engine::default_platform(),
     };
@@ -169,18 +166,29 @@ fn list(app: &App) -> Result<()> {
     }
     println!("目录条目（revision {}）:", revision);
     println!(
-        "{:<20} {:<24} {:<10} {:<8} {:>12}  {:<4} {}",
-        "ID", "名称", "版本", "平台", "大小", "本地", "更新时间"
+        "{:<20} {:<24} {:<10} {:<8} {:>12}  {:<4} 更新时间",
+        "ID", "名称", "版本", "平台", "大小", "本地"
     );
     for entry in catalog.visible() {
         println!(
             "{:<20} {:<24} {:<10} {:<8} {:>12}  {:<4} {}",
             entry.id,
             truncate_chars(&entry.name, 24),
-            truncate_chars(if entry.version.is_empty() { "-" } else { &entry.version }, 10),
+            truncate_chars(
+                if entry.version.is_empty() {
+                    "-"
+                } else {
+                    &entry.version
+                },
+                10
+            ),
             entry.platform.as_str(),
             human_bytes(entry.size),
-            if index.contains_key(&entry.id) { "是" } else { "-" },
+            if index.contains_key(&entry.id) {
+                "是"
+            } else {
+                "-"
+            },
             format_ms(entry.updated_at_ms)
         );
     }
@@ -217,13 +225,8 @@ async fn fetch(app: &App, entry_id: &str, out: Option<PathBuf>) -> Result<()> {
     let store = app.store()?;
     let config = app.runtime_config(&store)?;
     println!("正在连接中继并等待持有该条目的设备响应…");
-    let path = drive_client::ops::catalog_fetch(
-        &config,
-        entry_id,
-        out,
-        Duration::from_secs(180),
-    )
-    .await?;
+    let path =
+        drive_client::ops::catalog_fetch(&config, entry_id, out, Duration::from_secs(180)).await?;
     println!("下载完成: {}", path.display());
     println!("文件已记录到本地索引（daemon 在线时会通过 have_list 广播）。");
     Ok(())

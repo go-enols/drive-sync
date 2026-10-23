@@ -16,7 +16,7 @@
 | 大文件吞吐（本机回环 50MB，64KiB 块） | > 20 MB/s | **108.08 MB/s**（windowed，端到端含 ack；wire 192.69 MB/s） | **110.01 MB/s** windowed / **195.78 MB/s** blast（无 ack） | **PASS**（约 5.4 倍余量） |
 | 中继 RSS（空载，100 连接） | < 100 MB | **27.5 MiB**（进程合计口径；见 §4.3） | 31.8 MiB（同口径） | **PASS**（口径受限，见 §5.2） |
 | E2E 握手（session_init/session_ack 经中继） | 无明确指标 | 0.496 ms | 0.561 ms | 参考 |
-| 端到端测试 | 全流程自动测试通过 | `cargo test -p drive-e2e`：**18 passed / 0 failed**（含配对永久性 2、撤销 3） | — | **PASS** |
+| 端到端测试 | 全流程自动测试通过 | `cargo test -p drive-e2e`：**26 passed / 0 failed**（含撤销信箱 5、客户端离线撤销 1、90 天过期 2、配对永久性/边界 2） | — | **PASS** |
 
 **关键结论（限流口径）**：中继默认限流已从"200 帧/s + 超限丢帧"调整为
 **2000 帧/s、burst 4000、令牌不足先背压等待（最多 2s）不丢帧**（协议 §4.5 同步）。
@@ -184,7 +184,7 @@ p95 0.22ms、p99 0.26ms，均在亚毫秒级；v0.1 的"JSON + base64 + 内存�
 - 默认限流组 windowed 50MiB 实测 108.08 MB/s、0 丢帧/0 `rate_limited`；
 - 结论：**默认配置已不与架构吞吐目标冲突**，无需为吞吐关闭限流。
 
-## 5. 端到端测试覆盖（`cargo test -p drive-e2e`：18 passed / 0 failed）
+## 5. 端到端测试覆盖（`cargo test -p drive-e2e`：26 passed / 0 failed）
 
 | 测试文件 | 用例 | 覆盖 |
 |---|---|---|
@@ -195,7 +195,10 @@ p95 0.22ms、p99 0.26ms，均在亚毫秒级；v0.1 的"JSON + base64 + 内存�
 | `e2e_reconnect_spool.rs` | `spool_replay_after_peer_online` | B 离线时 A 写剪切板→spool；B 上线后 `SpoolReplayed` + 内容补发 |
 | 同上 | `relay_restart_transparent_reconnect` | 中继 `shutdown()`（向在线连接发 Close 1001）→ 同地址重启 → **客户端不重启自动重连**、重建 E2E 会话、双向剪切板继续同步 |
 | `e2e_vault_share.rs` | `vault_put_share_and_get_decrypt_on_peer` | A `vault_put`（TTL clamp 断言）→ 会话建立后 E2E `vault_share` 共享密钥（B 收到 `VaultKeyReceived`）→ B 拉取解密 BLAKE3 一致；`vault_list` 仅本设备可见 |
-| `e2e_pairing_permanence.rs` | 2 个用例 | 配对永久有效（见上行） |
+| `e2e_pairing_permanence.rs` | 2 个用例 | 配对长期有效（`paired_at` 10 年前 + `last_seen` 近期仍有效）；重复配对幂等 |
+| `e2e_inactive_expiry.rs` | 2 个用例 | `last_seen` 91 天前 → 启动自动生成 inactive_90d 通知并删除记录、需重新配对；89 天 23 小时边界仍有效且会话刷新活跃时间 |
+| `e2e_revocation_mailbox.rs` | 5 个用例 | 撤销通知离线信箱：B 离线 put → B 上线 pending → ack 删除；在线立即投递/未 ack 重投；非目标 ack 不删；伪造/过期/超大拒绝；中继重启 pending 保留 |
+| `e2e_client_offline_revoke.rs` | 1 个用例 | 客户端视角：A 删除离线 B → 通知投递 relay → B 上线验签删除记录并 ack → 双方 peers 清空、重新配对恢复 |
 | `e2e_pair_revoke.rs` | 3 个用例 | 在线撤销（A 外部删除 peers.json → ≤2s 会话销毁 + PairRevoked → B 自动删记录；撤销后双向同步阻断）；离线撤销（A 停机删除 → B 握手被拒）；重新配对后恢复同步 |
 | `relay_vault_ttl.rs` | 4 个用例 | 见 §5.1 |
 

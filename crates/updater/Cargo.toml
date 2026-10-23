@@ -1,0 +1,41 @@
+[package]
+name = "drive-updater"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "drive-sync 自动更新：Ed25519 签名清单、下载、BLAKE3 校验与安全替换二进制"
+
+# 更新客户端库（CLI 与 daemon 复用）。
+[lib]
+name = "drive_updater"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sign-manifest"
+path = "src/bin/sign_manifest.rs"
+doc = false
+
+# 发布流水线用的清单生成/合并工具（本地也可用于手工测试）。
+[[bin]]
+name = "gen-manifest"
+path = "src/bin/gen_manifest.rs"
+doc = false
+
+[dependencies]
+drive-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+# 仅需 blocking + rustls：不依赖系统 OpenSSL，交叉/CI 构建稳定。
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "rustls-tls",
+] }
+
+[dev-dependencies]
+tempfile = "3"

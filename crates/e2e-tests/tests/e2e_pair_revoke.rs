@@ -1,4 +1,4 @@
-﻿//! 配对撤销 e2e 回归（task-7 中依赖 task-6 的部分）。
+//! 配对撤销 e2e 回归（task-7 中依赖 task-6 的部分）。
 //!
 //! 需求：已配对设备除非任一方显式删除 `PairRecord`，否则永久有效；一旦删除：
 //! - 在线：对端应在秒级内收到 `PairRevoked`、双方删除 peer 记录、会话销毁、双向同步停止；
@@ -16,9 +16,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use drive_client::{RuntimeEvent, Store};
-use drive_e2e::client_harness::{
-    pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN,
-};
+use drive_e2e::client_harness::{pair_nodes, ClientNode, DEFAULT_EVENT_TIMEOUT, DEFAULT_TOKEN};
 use drive_e2e::harness::{relay_config, start_relay};
 use tempfile::TempDir;
 
@@ -30,7 +28,7 @@ fn external_remove_peer(dir: &Path, device_id: &str) -> Result<bool> {
 }
 
 fn peers(dir: &Path) -> Result<Vec<drive_core::pairing::PairRecord>> {
-    Ok(Store::open(dir)?.load_peers()?)
+    Store::open(dir)?.load_peers()
 }
 
 fn has_peer(dir: &Path, device_id: &str) -> Result<bool> {
@@ -59,13 +57,11 @@ async fn wait_peer_gone(dir: &Path, device_id: &str, timeout: Duration) -> Resul
 
 /// 断言两个已撤销设备之间剪切板不再同步（双向各等 2s，期望超时=未应用）。
 async fn assert_clipboard_not_synced(a: &mut ClientNode, b: &mut ClientNode) -> Result<()> {
-    a.set_clipboard_text("revoked: should not reach B")
-        .await?;
+    a.set_clipboard_text("revoked: should not reach B").await?;
     if b.recv_clipboard(Duration::from_secs(2)).await.is_ok() {
         bail!("撤销后 A→B 剪切板仍然生效（不应发生）");
     }
-    b.set_clipboard_text("revoked: should not reach A")
-        .await?;
+    b.set_clipboard_text("revoked: should not reach A").await?;
     if a.recv_clipboard(Duration::from_secs(2)).await.is_ok() {
         bail!("撤销后 B→A 剪切板仍然生效（不应发生）");
     }
@@ -126,9 +122,10 @@ async fn online_revoke_propagates_and_stops_sync() -> Result<()> {
 
     // B 应在秒级内收到 PairRevoked → 删除 A 的本地 peer 记录，并 emit PeerUnpaired。
     wait_peer_gone(&dir_b, &a_id, Duration::from_secs(10)).await?;
-    b.wait_event(Duration::from_secs(10), |event| {
-        matches!(event, RuntimeEvent::PeerUnpaired { device_id, .. } if *device_id == a_id)
-    })
+    b.wait_event(
+        Duration::from_secs(10),
+        |event| matches!(event, RuntimeEvent::PeerUnpaired { device_id, .. } if *device_id == a_id),
+    )
     .await?;
 
     // 双方记录均不存在；会话销毁后剪切板双向都不再生效。
@@ -154,7 +151,15 @@ async fn offline_revoke_requires_re_pairing_to_restore() -> Result<()> {
     let relay = start_relay(relay_config(None)).await?;
     let url = relay.ws_url();
 
-    pair_nodes(&dir_a, &dir_b, "离线撤销A", "离线撤销B", &url, DEFAULT_TOKEN).await?;
+    pair_nodes(
+        &dir_a,
+        &dir_b,
+        "离线撤销A",
+        "离线撤销B",
+        &url,
+        DEFAULT_TOKEN,
+    )
+    .await?;
 
     // A 离线（未启动）时，外部管理进程删除 A 侧的 B 记录。
     assert!(external_remove_peer(&dir_a, &b_id_like(&dir_a)?)?);
@@ -181,7 +186,15 @@ async fn offline_revoke_requires_re_pairing_to_restore() -> Result<()> {
     // 重新配对：停掉运行时后用一次性连接完成配对，再启动即可恢复同步。
     a.shutdown().await?;
     b.shutdown().await?;
-    pair_nodes(&dir_a, &dir_b, "离线撤销A", "离线撤销B", &url, DEFAULT_TOKEN).await?;
+    pair_nodes(
+        &dir_a,
+        &dir_b,
+        "离线撤销A",
+        "离线撤销B",
+        &url,
+        DEFAULT_TOKEN,
+    )
+    .await?;
     assert!(has_peer(&dir_a, &b_id)?, "重新配对后 A 应有 B 记录");
     assert!(has_peer(&dir_b, &a_id)?, "重新配对后 B 应有 A 记录");
 
@@ -208,7 +221,11 @@ fn b_id_like(dir: &Path) -> Result<String> {
     let records = peers(dir)?;
     match records.as_slice() {
         [record] => Ok(record.peer.device_id.clone()),
-        other => bail!("期望 {} 中恰好 1 条配对记录，实际 {}", dir.display(), other.len()),
+        other => bail!(
+            "期望 {} 中恰好 1 条配对记录，实际 {}",
+            dir.display(),
+            other.len()
+        ),
     }
 }
 

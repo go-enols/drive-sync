@@ -1,4 +1,4 @@
-﻿//! drive-relay 可执行程序：解析参数、初始化日志、启动中继并等待退出信号。
+//! drive-relay 可执行程序：解析参数、初始化日志、启动中继并等待退出信号。
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -29,6 +29,10 @@ struct Args {
     /// 加密暂存目录；缺省不启用暂存
     #[arg(long)]
     vault_dir: Option<PathBuf>,
+
+    /// 中继状态目录（撤销通知离线信箱；默认 ./drive-relay-state）
+    #[arg(long, default_value = "./drive-relay-state")]
+    data_dir: PathBuf,
 
     /// 暂存每设备总配额（MiB）
     #[arg(long, default_value_t = 1024)]
@@ -120,6 +124,7 @@ async fn main() -> Result<()> {
         bind,
         access_token: token,
         vault_dir: args.vault_dir.clone(),
+        data_dir: args.data_dir.clone(),
         allow_multi_conn: args.allow_multi_conn,
         pair_ttl_secs: args.pair_ttl.max(1),
         rate_limit_per_sec: args.rate_limit,

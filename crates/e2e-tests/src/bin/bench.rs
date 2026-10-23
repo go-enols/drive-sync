@@ -1,4 +1,4 @@
-﻿//! `drive-bench`：drive-sync 端到端加密转发延迟与吞吐基准。
+//! `drive-bench`：drive-sync 端到端加密转发延迟与吞吐基准。
 //!
 //! 测试拓扑（全部在单进程内，中继监听 `127.0.0.1:0`，端口随机）：
 //!
@@ -232,11 +232,8 @@ async fn main() -> Result<()> {
         }
     );
 
-    let outcome = tokio::time::timeout(
-        args.global_timeout(),
-        run_bench(&args, &ws_url, relay_info),
-    )
-    .await;
+    let outcome =
+        tokio::time::timeout(args.global_timeout(), run_bench(&args, &ws_url, relay_info)).await;
     if let Err(error) = tokio::time::timeout(Duration::from_secs(10), relay.shutdown()).await {
         eprintln!("警告: 中继关停超时: {error}");
     }
@@ -332,12 +329,18 @@ async fn run_bench(args: &Args, ws_url: &str, relay_info: Value) -> Result<Value
     let baseline_memory = sample_memory(args);
 
     // 3) 1KiB 剪切板消息 RTT。
-    println!("[阶段 1/4] 1KiB 剪切板 E2E RTT（N={}，warmup={}）...", args.rtt_n, args.warmup);
+    println!(
+        "[阶段 1/4] 1KiB 剪切板 E2E RTT（N={}，warmup={}）...",
+        args.rtt_n, args.warmup
+    );
     let rtt = run_rtt(&mut a, &mut b, &mut session_a, &mut session_b, args).await?;
     let after_rtt = sample_memory(args);
 
     // 4) 64KiB 分块吞吐：windowed（协议流控）+ blast（无 ack）。
-    println!("[阶段 2/4] 64KiB 分块吞吐 windowed（{} MiB）...", args.total_mib);
+    println!(
+        "[阶段 2/4] 64KiB 分块吞吐 windowed（{} MiB）...",
+        args.total_mib
+    );
     let (windowed, a, b, session_a, session_b) = run_windowed_throughput(
         a,
         b,
@@ -363,7 +366,10 @@ async fn run_bench(args: &Args, ws_url: &str, relay_info: Value) -> Result<Value
             b,
         )
     } else {
-        println!("[阶段 3/4] 64KiB 分块吞吐 blast（无 ack，{} MiB）...", args.total_mib);
+        println!(
+            "[阶段 3/4] 64KiB 分块吞吐 blast（无 ack，{} MiB）...",
+            args.total_mib
+        );
         run_blast_no_ack(
             a,
             b,
@@ -377,7 +383,10 @@ async fn run_bench(args: &Args, ws_url: &str, relay_info: Value) -> Result<Value
     let after_transfer = sample_memory(args);
 
     // 5) 空闲连接数/内存观测（中继在进程内，用 presence 观测中继侧在线连接数）。
-    println!("[阶段 4/4] 空闲连接/内存观测（{} 条空闲连接）...", args.idle_conns);
+    println!(
+        "[阶段 4/4] 空闲连接/内存观测（{} 条空闲连接）...",
+        args.idle_conns
+    );
     let idle_started = Instant::now();
     let (observed_online, idle_handles) =
         run_idle_connections(ws_url, args.idle_conns, &mut a).await?;
@@ -394,8 +403,7 @@ async fn run_bench(args: &Args, ws_url: &str, relay_info: Value) -> Result<Value
         .and_then(Value::as_bool)
         .unwrap_or(false)
         || blast["passed"].as_bool().unwrap_or(false);
-    let throughput_passed =
-        windowed["passed"].as_bool().unwrap_or(false) && blast_ok;
+    let throughput_passed = windowed["passed"].as_bool().unwrap_or(false) && blast_ok;
     let idle_mem_passed = idle_memory
         .working_set_mib()
         .map(|mib| mib < TARGET_IDLE_MEM_MIB)
@@ -575,7 +583,7 @@ async fn run_windowed_throughput(
     total_bytes: usize,
     chunk_bytes: usize,
 ) -> Result<(Value, RelayClient, RelayClient, Session, Session)> {
-    if total_bytes % chunk_bytes != 0 {
+    if !total_bytes.is_multiple_of(chunk_bytes) {
         bail!("--total-mib 与 --chunk-kib 不整除，无法等分块");
     }
     let total = total_bytes as u64;
@@ -681,9 +689,8 @@ async fn run_windowed_throughput(
         }
     }
     let elapsed = started.elapsed();
-    let (received, first_recv, finished_at, session_b, b) = b_task
-        .await
-        .context("B 端吞吐任务 join 失败")??;
+    let (received, first_recv, finished_at, session_b, b) =
+        b_task.await.context("B 端吞吐任务 join 失败")??;
     if received != total {
         bail!("B 端收到 {received} / {total} 字节");
     }
@@ -728,7 +735,7 @@ async fn run_blast_no_ack(
     total_bytes: usize,
     chunk_bytes: usize,
 ) -> Result<(Value, RelayClient, RelayClient)> {
-    if total_bytes % chunk_bytes != 0 {
+    if !total_bytes.is_multiple_of(chunk_bytes) {
         bail!("--total-mib 与 --chunk-kib 不整除，无法等分块");
     }
     let total = total_bytes as u64;
@@ -887,12 +894,7 @@ async fn run_idle_connections(
         handles.push(tokio::spawn(async move {
             let identity = Identity::generate(&format!("bench-idle-{index}"));
             match RelayClient::connect(&url, identity, DEFAULT_TOKEN).await {
-                Ok(mut client) => loop {
-                    match client.recv(Duration::from_secs(3600)).await {
-                        Ok(_) => continue,
-                        Err(_) => break,
-                    }
-                },
+                Ok(mut client) => while client.recv(Duration::from_secs(3600)).await.is_ok() {},
                 Err(error) => eprintln!("[bench] 空闲连接 {index} 建立失败: {error:#}"),
             }
         }));
@@ -977,17 +979,32 @@ fn print_report(report: &Value) {
         "[1] 1KiB 剪切板消息 E2E RTT（N={}，warmup={}）",
         rtt["n"], rtt["warmup"]
     );
-    println!("    min  {:>9.3} ms", stats["min_ms"].as_f64().unwrap_or(0.0));
-    println!("    p50  {:>9.3} ms", stats["p50_ms"].as_f64().unwrap_or(0.0));
+    println!(
+        "    min  {:>9.3} ms",
+        stats["min_ms"].as_f64().unwrap_or(0.0)
+    );
+    println!(
+        "    p50  {:>9.3} ms",
+        stats["p50_ms"].as_f64().unwrap_or(0.0)
+    );
     println!(
         "    p95  {:>9.3} ms   （目标 < {:.0} ms  {}）",
         stats["p95_ms"].as_f64().unwrap_or(0.0),
         TARGET_RTT_P95_MS,
         pass_text(rtt["passed"].as_bool().unwrap_or(false))
     );
-    println!("    p99  {:>9.3} ms", stats["p99_ms"].as_f64().unwrap_or(0.0));
-    println!("    max  {:>9.3} ms", stats["max_ms"].as_f64().unwrap_or(0.0));
-    println!("    mean {:>9.3} ms", stats["mean_ms"].as_f64().unwrap_or(0.0));
+    println!(
+        "    p99  {:>9.3} ms",
+        stats["p99_ms"].as_f64().unwrap_or(0.0)
+    );
+    println!(
+        "    max  {:>9.3} ms",
+        stats["max_ms"].as_f64().unwrap_or(0.0)
+    );
+    println!(
+        "    mean {:>9.3} ms",
+        stats["mean_ms"].as_f64().unwrap_or(0.0)
+    );
 
     let windowed = &report["throughput"]["windowed"];
     let blast = &report["throughput"]["blast_no_ack"];
@@ -1004,7 +1021,11 @@ fn print_report(report: &Value) {
         windowed["receiver_mbps"].as_f64().unwrap_or(0.0),
         pass_text(windowed["passed"].as_bool().unwrap_or(false))
     );
-    if blast.get("skipped").and_then(Value::as_bool).unwrap_or(false) {
+    if blast
+        .get("skipped")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         println!(
             "    blast（无 ack）: SKIP（{}）",
             blast["reason"].as_str().unwrap_or("")

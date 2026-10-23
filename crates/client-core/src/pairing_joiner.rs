@@ -1,4 +1,4 @@
-﻿//! 配对"加入方"实现（B 端）。
+//! 配对"加入方"实现（B 端）。
 //!
 //! 为什么不用 `drive_core::pairing::PairingResponder`：协议 §4.3 要求 B 先发
 //! `pair_join`（中继据此把 A 的 invite 转给 B），而 `PairingResponder::accept`
@@ -95,13 +95,15 @@ impl PairingJoiner {
         let shared = self
             .shared
             .ok_or_else(|| anyhow::anyhow!("配对密钥尚未派生"))?;
+        let now = now_ms();
         Ok(PairRecord {
             v: PAIRING_VERSION,
             label: invite.device.name.clone(),
             peer: invite.device.clone(),
             relay_url: invite.relay_url.clone(),
-            paired_at_ms: now_ms(),
+            paired_at_ms: now,
             pairing_fingerprint: blake3_hex(&shared)[..16].to_string(),
+            last_seen_ms: now,
         })
     }
 }

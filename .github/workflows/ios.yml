@@ -1,0 +1,158 @@
+name: iOS
+
+# 触发方式：
+#   1) 手动：Actions → iOS → Run workflow（workflow_dispatch）
+#   2) push 到 main 且改动命中下列路径
+#   3) PR 命中下列路径
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/ios/**"
+      - "crates/mobile-core/**"
+      - "crates/core/**"
+      - "crates/client-core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "mobile/ios/**"
+      - "crates/mobile-core/**"
+      - "crates/core/**"
+      - "crates/client-core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ios.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build iOS Simulator app (unsigned)
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 检查 C ABI 头文件
+        run: |
+          if [[ ! -f crates/mobile-core/include/drive_mobile.h ]]; then
+            echo "::error::缺少 crates/mobile-core/include/drive_mobile.h（drive-mobile C ABI 契约，Android/iOS 共用）"
+            exit 1
+          fi
+          if ! grep -q "dm_start" crates/mobile-core/include/drive_mobile.h; then
+            echo "::error::drive_mobile.h 中未找到 dm_start，ABI 契约可能已变更"
+            exit 1
+          fi
+
+      - name: 安装 Rust + iOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: 检查 drive-mobile 是否在 workspace
+        run: |
+          if ! cargo metadata --no-deps --format-version 1 | grep -q '"name":"drive-mobile"'; then
+            echo "::error::Cargo.toml workspace.members 中没有 drive-mobile（crates/mobile-core），无法构建 iOS 静态库"
+            exit 1
+          fi
+
+      - name: 缓存 Cargo（registry/git/target）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ios-rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ios-rust-${{ runner.os }}-
+
+      - name: 构建 drive-mobile 静态库（device + simulator）
+        env:
+          CARGO_FLAGS: "--locked"
+        run: bash mobile/ios/scripts/build-ffi.sh
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程（project.yml → DriveSync.xcodeproj）
+        working-directory: mobile/ios
+        run: xcodegen generate --spec project.yml
+
+      - name: 构建模拟器 App（无需签名）
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DriveSync.xcodeproj \
+            -scheme DriveSync \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build \
+            -quiet 2>&1 | tee build.log
+
+      - name: 打包 .app 为 zip（模拟器包，不能直装 iPhone）
+        working-directory: mobile/ios
+        run: |
+          APP_PATH=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name "DriveSync.app" -print -quit)
+          if [[ -z "${APP_PATH}" ]]; then
+            echo "::error::未找到 DriveSync.app"
+            find build/Build/Products -maxdepth 3 -print || true
+            exit 1
+          fi
+          echo "APP_PATH=${APP_PATH}"
+          ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${GITHUB_WORKSPACE}/drive-sync-ios-simulator.zip"
+          ls -lh "${GITHUB_WORKSPACE}/drive-sync-ios-simulator.zip"
+
+      - name: 上传模拟器 App artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drive-sync-ios-simulator
+          path: drive-sync-ios-simulator.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传静态库 artifact（真机 Xcode 签名时可直接复用）
+        uses: actions/upload-artifact@v4
+        with:
+          name: drive-mobile-ios-staticlibs
+          path: |
+            mobile/ios/ffi/iphoneos/libdrive_mobile.a
+            mobile/ios/ffi/iphonesimulator/libdrive_mobile.a
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传构建日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: mobile/ios/build.log
+          if-no-files-found: ignore
+
+      - name: 构建摘要
+        run: |
+          {
+            echo "### iOS 模拟器构建成功"
+            echo ""
+            echo "- 产物：\`drive-sync-ios-simulator.zip\`（内含 \`DriveSync.app\`，**仅模拟器**，不能直接安装到 iPhone）"
+            echo "- 模拟器安装：\`unzip drive-sync-ios-simulator.zip && xcrun simctl install booted DriveSync.app\`"
+            echo "- 真机安装需要 Apple 签名：用 Xcode 打开工程、选择个人 Team 自动签名（详见 docs/mobile-ios.md）"
+            echo "- 静态库：artifact \`drive-mobile-ios-staticlibs\`"
+          } >> "$GITHUB_STEP_SUMMARY"

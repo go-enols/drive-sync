@@ -1,4 +1,4 @@
-﻿//! 剪切板后端：统一 trait + 系统剪切板（arboard，文本/PNG 图片）+ file 模式。
+//! 剪切板后端：统一 trait + 系统剪切板（arboard，文本/PNG 图片）+ file 模式。
 //!
 //! - **auto**：优先同步文本；没有文本（或文本未变）时尝试图片；
 //! - **text**：只同步文本；
@@ -84,9 +84,8 @@ pub fn build_backend(spec: &str) -> Result<Box<dyn ClipboardBackend>> {
         ClipboardMode::File(path) => {
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!("创建剪切板文件目录失败: {}", parent.display())
-                    })?;
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("创建剪切板文件目录失败: {}", parent.display()))?;
                 }
             }
             println!("剪切板后端: {}", mode.describe());
@@ -99,8 +98,7 @@ pub fn build_backend(spec: &str) -> Result<Box<dyn ClipboardBackend>> {
                 println!("剪切板后端: {}", mode.describe());
                 #[cfg(target_os = "linux")]
                 {
-                    if std::env::var("WAYLAND_DISPLAY").is_ok()
-                        && std::env::var("DISPLAY").is_err()
+                    if std::env::var("WAYLAND_DISPLAY").is_ok() && std::env::var("DISPLAY").is_err()
                     {
                         println!(
                             "提示: 当前为纯 Wayland 会话（无 XWayland），arboard 依赖 X11；\
@@ -336,10 +334,7 @@ impl ClipboardBackend for FileBackend {
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 fn image_key(width: usize, height: usize, rgba: &[u8]) -> String {
-    format!(
-        "{width}x{height}:{}",
-        blake3::hash(rgba).to_hex().to_string()
-    )
+    format!("{width}x{height}:{}", blake3::hash(rgba).to_hex())
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -350,20 +345,11 @@ fn encode_png(width: usize, height: usize, rgba: &[u8]) -> Result<Vec<u8>> {
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| anyhow::anyhow!("图片尺寸非法: {width}x{height}"))?;
     if rgba.len() != expected {
-        bail!(
-            "图片 RGBA 数据长度非法: {}，期望 {}",
-            rgba.len(),
-            expected
-        );
+        bail!("图片 RGBA 数据长度非法: {}，期望 {}", rgba.len(), expected);
     }
     let mut out = Vec::new();
     image::codecs::png::PngEncoder::new(&mut out)
-        .write_image(
-            rgba,
-            width as u32,
-            height as u32,
-            ExtendedColorType::Rgba8,
-        )
+        .write_image(rgba, width as u32, height as u32, ExtendedColorType::Rgba8)
         .context("PNG 编码失败")?;
     Ok(out)
 }
@@ -420,10 +406,7 @@ mod tests {
             .write_payload(&ClipboardPayload::text("remote applied").unwrap())
             .unwrap();
         assert!(backend.read_change().is_none());
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "remote applied"
-        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "remote applied");
     }
 
     #[test]
@@ -441,4 +424,3 @@ mod tests {
         assert!(backend.read_change().is_none());
     }
 }
-

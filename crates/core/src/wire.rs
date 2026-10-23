@@ -1,4 +1,4 @@
-﻿//! 客户端 ↔ 中继服务器的在线协议（JSON over WebSocket）。
+//! 客户端 ↔ 中继服务器的在线协议（JSON over WebSocket）。
 //!
 //! 中继只做三件事：设备连接注册、配对信息转发、E2E 密文转发（以及可选的加密暂存）。
 //! 它不持有任何明文内容，也不持久化剪切板/目录/文件数据。
@@ -35,11 +35,20 @@ pub enum ClientToServer {
         join: PairJoinPayload,
     },
     /// E2E 会话握手第 1 步：发起方交给中继转发给对端。
-    SessionInit { to: String, msg: SessionInitMsg },
+    SessionInit {
+        to: String,
+        msg: SessionInitMsg,
+    },
     /// E2E 会话握手第 2 步：响应方交给中继转发回发起方。
-    SessionAck { to: String, msg: SessionAckMsg },
+    SessionAck {
+        to: String,
+        msg: SessionAckMsg,
+    },
     /// 转发 E2E 信封（中继不解析 ciphertext）。
-    Relay { to: String, envelope: E2eEnvelope },
+    Relay {
+        to: String,
+        envelope: E2eEnvelope,
+    },
     /// 可选：加密暂存上传（服务端只存密文，TTL ≤ 30 天）。
     VaultPut {
         object_id: String,
@@ -48,11 +57,25 @@ pub enum ClientToServer {
         ciphertext: Vec<u8>,
         ttl_secs: u64,
     },
-    VaultGet { object_id: String },
+    VaultGet {
+        object_id: String,
+    },
     VaultList,
-    VaultDelete { object_id: String },
+    VaultDelete {
+        object_id: String,
+    },
+    /// 投递一条签名的解除配对通知（对端离线时由中继暂存，上线后投递）。
+    RevocationPut {
+        notice: crate::revocation::RevocationNotice,
+    },
+    /// 确认已处理某条解除配对通知（中继删除该条）。
+    RevocationAck {
+        notice_id: String,
+    },
     /// 应用层心跳（服务端立即回 Pong）。
-    Ping { ts_ms: u64 },
+    Ping {
+        ts_ms: u64,
+    },
 }
 
 /// 中继 → 客户端。
@@ -81,15 +104,23 @@ pub enum ServerToClient {
         peer: Option<String>,
     },
     /// 对端发来的会话握手请求（设备间直接处理，中继只转发）。
-    SessionInit { from: String, msg: SessionInitMsg },
+    SessionInit {
+        from: String,
+        msg: SessionInitMsg,
+    },
     /// 对端返回的会话握手响应。
-    SessionAck { from: String, msg: SessionAckMsg },
+    SessionAck {
+        from: String,
+        msg: SessionAckMsg,
+    },
     Relay {
         from: String,
         envelope: E2eEnvelope,
     },
     /// 在线设备列表变化（仅本服务器上的设备；加密内容与本字段无关）。
-    Presence { online: Vec<String> },
+    Presence {
+        online: Vec<String>,
+    },
     VaultPutResult {
         ok: bool,
         object_id: String,
@@ -115,8 +146,22 @@ pub enum ServerToClient {
         object_id: String,
         message: String,
     },
-    Pong { ts_ms: u64 },
-    Error { code: String, message: String },
+    /// 登录后中继推送的待处理解除配对通知（对端离线期间投递的）。
+    PendingRevocations {
+        notices: Vec<crate::revocation::RevocationNotice>,
+    },
+    RevocationPutResult {
+        ok: bool,
+        notice_id: String,
+        message: String,
+    },
+    Pong {
+        ts_ms: u64,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 /// Hello 签名输入：`b"drive-sync-hello-v1" || nonce || device_id`。

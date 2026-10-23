@@ -1,4 +1,4 @@
-﻿//! drive-sync 端到端测试与基准的共享库。
+//! drive-sync 端到端测试与基准的共享库。
 //!
 //! 只放"测试基础设施"，不含产品逻辑：
 //! - [`harness`]：进程内中继启动、真实 WebSocket 客户端（Hello 认证）、E2E 握手、
@@ -13,4 +13,3 @@
 
 pub mod client_harness;
 pub mod harness;
-

@@ -12,19 +12,33 @@ use crate::vault::VaultMeta;
 #[serde(tag = "m", rename_all = "snake_case")]
 pub enum PeerMessage {
     /// 剪切板内容变化。
-    Clipboard { event: ClipboardEvent },
+    Clipboard {
+        event: ClipboardEvent,
+    },
     /// 目录全量快照（新配对/重连首次同步）。
-    CatalogSnapshot { ops: Vec<CatalogOp>, revision: u64 },
+    CatalogSnapshot {
+        ops: Vec<CatalogOp>,
+        revision: u64,
+    },
     /// 目录增量操作。
-    CatalogDelta { ops: Vec<CatalogOp>, revision: u64 },
+    CatalogDelta {
+        ops: Vec<CatalogOp>,
+        revision: u64,
+    },
     /// 请求对端发送目录全量快照。
     CatalogRequest,
     /// 本机持有的软件条目 id 列表（用于"谁有这份软件"的可用性）。
-    HaveList { entry_ids: Vec<String> },
+    HaveList {
+        entry_ids: Vec<String>,
+    },
     /// 请求对端把某个软件传给本机。
-    FetchRequest { entry_id: String },
+    FetchRequest {
+        entry_id: String,
+    },
     /// 文件传输报价。
-    TransferOffer { manifest: TransferManifest },
+    TransferOffer {
+        manifest: TransferManifest,
+    },
     /// 接受传输，从 `from_offset` 续传。
     TransferAccept {
         transfer_id: String,
@@ -41,7 +55,10 @@ pub enum PeerMessage {
         data: Vec<u8>,
     },
     /// 接收端确认已连续收到的字节数（流控窗口，每 8 块或 512 KiB 回一次）。
-    TransferAck { transfer_id: String, received_bytes: u64 },
+    TransferAck {
+        transfer_id: String,
+        received_bytes: u64,
+    },
     TransferDone {
         transfer_id: String,
         total_bytes: u64,
@@ -57,14 +74,20 @@ pub enum PeerMessage {
         meta: VaultMeta,
     },
     /// 应用层心跳（穿透 NAT/保持连接；桌面端 30~60s）。
-    Ping { ts_ms: u64 },
-    Pong { ts_ms: u64 },
+    Ping {
+        ts_ms: u64,
+    },
+    Pong {
+        ts_ms: u64,
+    },
     /// 对端已解除配对（撤销信任）。
     ///
     /// 仅在已有 E2E 会话时尽力发送；接收方应立即删除本地 PairRecord、销毁会话、
     /// 清理该对端的待发队列，此后不再与该设备同步。若对端离线收不到，
     /// 下次会话握手会因发起方已无配对记录而被拒绝（安全兜底）。
-    PairRevoked { reason: String },
+    PairRevoked {
+        reason: String,
+    },
 }
 
 impl PeerMessage {

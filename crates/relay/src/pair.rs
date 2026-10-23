@@ -1,4 +1,4 @@
-﻿//! 配对路由（协议 §4.3 / §5）。
+//! 配对路由（协议 §4.3 / §5）。
 //!
 //! 中继只保存 `code_hash → (announcer, invite, expires_at)` 登记：
 //! - TTL 默认 120s（可配置，且不超过配置上限）；
@@ -98,10 +98,9 @@ impl PairRegistry {
     pub(crate) fn lookup(&mut self, code_hash: &str) -> Option<(String, PairInvite)> {
         let now = Instant::now();
         match self.by_code.get(code_hash) {
-            Some(registration) if registration.expires_at > now => Some((
-                registration.announcer.clone(),
-                registration.invite.clone(),
-            )),
+            Some(registration) if registration.expires_at > now => {
+                Some((registration.announcer.clone(), registration.invite.clone()))
+            }
             Some(_) => {
                 self.remove_entry(code_hash);
                 None

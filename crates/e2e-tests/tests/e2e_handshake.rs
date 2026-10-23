@@ -1,4 +1,4 @@
-﻿//! E2E 握手 + 剪切板消息经进程内中继往返的冒烟测试。
+//! E2E 握手 + 剪切板消息经进程内中继往返的冒烟测试。
 //!
 //! 这是 `drive-bench` 的 CI 快速版本：验证两条真实 WebSocket 客户端经 hello 认证、
 //! 经中继转发 `session_init`/`session_ack` 完成 E2E 握手，并以加密信封双向收发
@@ -49,7 +49,7 @@ async fn two_clients_handshake_and_clipboard_roundtrip() -> Result<()> {
 
     for index in 0..rounds {
         // A → 中继 → B
-        let message = clipboard_message(&a_id, index as u64, &text)?;
+        let message = clipboard_message(&a_id, index, &text)?;
         let envelope = session_a.encrypt("peer", &message.to_bytes()?)?;
         a.send(&ClientToServer::Relay {
             to: b_id.clone(),
@@ -73,10 +73,7 @@ async fn two_clients_handshake_and_clipboard_roundtrip() -> Result<()> {
         }
 
         // B → 中继 → A（回显）
-        let echo = PeerMessage::Pong {
-            ts_ms: index as u64,
-        }
-        .to_bytes()?;
+        let echo = PeerMessage::Pong { ts_ms: index }.to_bytes()?;
         let envelope = session_b.encrypt("peer", &echo)?;
         b.send(&ClientToServer::Relay {
             to: a_id.clone(),
@@ -90,16 +87,16 @@ async fn two_clients_handshake_and_clipboard_roundtrip() -> Result<()> {
             bail!("A 收到意外 kind: {kind}");
         }
         match PeerMessage::from_bytes(&plaintext)? {
-            PeerMessage::Pong { ts_ms } => assert_eq!(ts_ms, index as u64),
+            PeerMessage::Pong { ts_ms } => assert_eq!(ts_ms, index),
             other => bail!("A 收到意外消息: {other:?}"),
         }
     }
 
     // 序号严格递增、无丢失。
-    assert_eq!(session_a.send_seq(), rounds as u64);
-    assert_eq!(session_b.recv_seq(), rounds as u64);
-    assert_eq!(session_b.send_seq(), rounds as u64);
-    assert_eq!(session_a.recv_seq(), rounds as u64);
+    assert_eq!(session_a.send_seq(), rounds);
+    assert_eq!(session_b.recv_seq(), rounds);
+    assert_eq!(session_b.send_seq(), rounds);
+    assert_eq!(session_a.recv_seq(), rounds);
 
     a.close().await;
     b.close().await;

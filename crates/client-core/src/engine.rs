@@ -1,4 +1,4 @@
-﻿//! 同步状态机（纯同步逻辑，无网络依赖，可单测）。
+//! 同步状态机（纯同步逻辑，无网络依赖，可单测）。
 //!
 //! Engine 负责：
 //! - 连接认证后的 `welcome`/`presence` 处理，按"device_id 字典序小的一方发起"规则做 E2E 会话握手；
@@ -22,6 +22,7 @@ use drive_core::clipboard::{ClipboardEvent, ClipboardKind, ClipboardPayload};
 use drive_core::identity::Identity;
 use drive_core::pairing::PairRecord;
 use drive_core::peer::PeerMessage;
+use drive_core::revocation::{reason as revocation_reason, RevocationNotice};
 use drive_core::session::{
     accept_session_init, complete_session, create_session_init, Session, SessionInit,
 };
@@ -32,7 +33,9 @@ use drive_core::wire::{ClientToServer, ServerToClient};
 
 use crate::dedupe::{AppliedRecord, RecentApplied, TimedLru};
 use crate::spool::{Spool, SpoolItem};
-use crate::store::{ClientConfig, ClipboardSettings, LocalIndexEntry, SpoolSettings, Store, VaultKey};
+use crate::store::{
+    ClientConfig, ClipboardSettings, LocalIndexEntry, SpoolSettings, Store, VaultKey,
+};
 use crate::transfer_rx::{align_up, PartialReceiver};
 use crate::util::hash_file;
 
@@ -58,6 +61,16 @@ pub const SESSION_MAX_ATTEMPTS: u32 = 8;
 /// 用于"同 identity 新连接抢旧连接"场景：被抢占方重连了，但对端看不到 offline 事件、
 /// 仍持有 stale session 不会重新握手；正常启动时小 id 侧毫秒级发起，不会触发兜底。
 pub const SESSION_FALLBACK_DELAY_MS: u64 = 3_000;
+/// 90 天不活跃过期检查周期。
+pub const INACTIVE_PAIR_CHECK_INTERVAL_MS: u64 = 5 * 60 * 1000;
+/// `last_seen_ms` 落盘间隔（内存更新 + 定期 flush，避免写风暴）。
+pub const LAST_SEEN_FLUSH_INTERVAL_MS: u64 = 60 * 1000;
+/// 会话空闲超过该时长时发 `PeerMessage::Ping` 心跳（避免在线但无同步被误判过期）。
+pub const HEARTBEAT_IDLE_MS: u64 = 6 * 60 * 60 * 1000;
+/// 心跳检查周期。
+pub const HEARTBEAT_CHECK_INTERVAL_MS: u64 = 60 * 1000;
+/// 待投递撤销通知的重试间隔。
+pub const REVOCATION_RETRY_INTERVAL_MS: u64 = 5 * 1000;
 /// 断点续传时复用的传输清单缓存有效期（同 entry 再次 fetch 时复用 transfer_id）。
 pub const OFFER_CACHE_TTL_MS: u64 = 10 * 60 * 1000;
 /// 传输进度事件间隔（字节）。
@@ -192,6 +205,30 @@ pub enum RuntimeEvent {
         name: String,
         reason: String,
     },
+    /// 本地生成了离线撤销通知（待投递中继离线信箱）。
+    RevocationQueued {
+        device_id: String,
+        notice_id: String,
+        reason: String,
+    },
+    /// 离线撤销通知已交付中继，对端上线后会收到。
+    RevocationDelivered {
+        device_id: String,
+        notice_id: String,
+    },
+    /// 通过中继离线信箱收到对端解除配对通知，已删除本地配对记录。
+    PeerRevocationNotice {
+        device_id: String,
+        name: String,
+        reason: String,
+    },
+    /// 配对因超过 90 天不活跃自动过期，已删除并生成离线撤销通知。
+    PeerExpired {
+        device_id: String,
+        name: String,
+        last_seen_ms: u64,
+        expires_at_ms: u64,
+    },
     RelayError {
         code: String,
         message: String,
@@ -313,6 +350,34 @@ impl RuntimeEvent {
                 name,
                 reason,
             } => format!("对端已解除配对: {name} ({device_id})，本地配对记录已删除（原因: {reason}）"),
+            Self::PeerExpired {
+                device_id,
+                name,
+                last_seen_ms,
+                expires_at_ms,
+            } => format!(
+                "配对因超过 90 天未活跃已失效，请重新配对: {name} ({device_id})；最近活跃 {}, 原定到期 {}",
+                format_epoch_ms(*last_seen_ms),
+                format_epoch_ms(*expires_at_ms)
+            ),
+            Self::RevocationQueued {
+                device_id,
+                notice_id,
+                reason,
+            } => format!(
+                "已生成离线撤销通知（对端离线也会在下次上线后清理）: {device_id} ({notice_id}, {reason})"
+            ),
+            Self::RevocationDelivered {
+                device_id,
+                notice_id,
+            } => format!("离线撤销通知已交付中继: {device_id} ({notice_id})"),
+            Self::PeerRevocationNotice {
+                device_id,
+                name,
+                reason,
+            } => format!(
+                "对端已解除配对（离线通知）: {name} ({device_id})，本地配对记录已删除（原因: {reason}）"
+            ),
             Self::RelayError { code, message } => format!("中继错误 [{code}]: {message}"),
             Self::Error { message } => format!("内部错误: {message}"),
             Self::Stopped => "已停止".to_string(),
@@ -508,6 +573,15 @@ pub struct Engine {
     local_index_mtime: Option<u64>,
     /// peers.json 的 mtime（检测外部 `peers remove`/`pair` 写入）。
     peers_mtime: Option<u64>,
+    /// `last_seen_ms` 有内存更新未落盘。
+    peers_dirty: bool,
+    last_seen_flush_ms: u64,
+    last_inactive_check_ms: u64,
+    last_heartbeat_check_ms: u64,
+    /// 本地待投递的离线撤销通知（启动时从 `pending_revocations.json` 加载）。
+    pending_revocations: Vec<RevocationNotice>,
+    /// notice_id → 上次尝试投递时间（重试节流）。
+    pending_revocation_last_attempt: HashMap<String, u64>,
 }
 
 impl Engine {
@@ -530,6 +604,21 @@ impl Engine {
         let local_index_mtime = store.file_mtime_ms(&store.local_index_path());
         let peers_mtime = store.file_mtime_ms(&store.peers_path());
         let _ = spool.prune_expired(now_ms());
+        // 加载本地待投递的离线撤销通知（过期的直接丢弃并 ack）。
+        let now = now_ms();
+        let mut pending_revocations = Vec::new();
+        match store.take_pending_revocations() {
+            Ok(notices) => {
+                for notice in notices {
+                    if notice.is_expired(now) {
+                        let _ = store.ack_revocation(notice.notice_id());
+                    } else {
+                        pending_revocations.push(notice);
+                    }
+                }
+            }
+            Err(error) => tracing::warn!(error = %error, "加载 pending_revocations.json 失败"),
+        }
         Ok(Self {
             store,
             identity,
@@ -562,6 +651,12 @@ impl Engine {
             catalog_mtime,
             local_index_mtime,
             peers_mtime,
+            peers_dirty: false,
+            last_seen_flush_ms: now_ms(),
+            last_inactive_check_ms: now_ms(),
+            last_heartbeat_check_ms: now_ms(),
+            pending_revocations,
+            pending_revocation_last_attempt: HashMap::new(),
         })
     }
 
@@ -661,6 +756,9 @@ impl Engine {
             online: self.online.iter().cloned().collect(),
         });
         self.announce_online_peers(&mut out);
+        // 启动/上线先处理 90 天过期，再投递积压的离线撤销通知。
+        self.check_inactive_pairs(now, &mut out);
+        self.flush_pending_revocations(now, true, &mut out);
         self.retry_sessions(now, &mut out);
         out
     }
@@ -668,6 +766,8 @@ impl Engine {
     /// 连接断开：清理会话级状态（保留 spool 与 `.part` 文件以便重连后补发/续传）。
     pub fn on_disconnect(&mut self) -> EngineOutput {
         let mut out = EngineOutput::default();
+        // 断开前把内存中的 last_seen 落盘（shutdown flush）。
+        self.flush_peers_if_dirty();
         self.reset_connection_state(&mut out);
         out
     }
@@ -726,6 +826,20 @@ impl Engine {
             ServerToClient::SessionInit { from, msg } => self.handle_session_init(from, msg),
             ServerToClient::SessionAck { from, msg } => self.handle_session_ack(from, msg),
             ServerToClient::Relay { from, envelope } => self.handle_relay(from, envelope),
+            ServerToClient::PendingRevocations { notices } => {
+                let mut out = EngineOutput::default();
+                self.handle_pending_revocations(notices, &mut out);
+                out
+            }
+            ServerToClient::RevocationPutResult {
+                ok,
+                notice_id,
+                message,
+            } => {
+                let mut out = EngineOutput::default();
+                self.handle_revocation_put_result(ok, notice_id, message, &mut out);
+                out
+            }
             ServerToClient::Error { code, message } => {
                 let mut out = EngineOutput::default();
                 out.events.push(RuntimeEvent::RelayError { code, message });
@@ -925,10 +1039,10 @@ impl Engine {
             });
             return out;
         }
+        // 收到任意 E2E 消息（含 Ping/Pong）都刷新 90 天不活跃计时。
+        self.mark_peer_active(from, now_ms());
         match message {
-            PeerMessage::Clipboard { event } => {
-                self.handle_remote_clipboard(from, event, &mut out)
-            }
+            PeerMessage::Clipboard { event } => self.handle_remote_clipboard(from, event, &mut out),
             PeerMessage::CatalogSnapshot { ops, revision: _ } => {
                 self.merge_catalog(from, ops, &mut out)
             }
@@ -1025,7 +1139,8 @@ impl Engine {
         self.peer_have.remove(peer_id);
         self.online_since.remove(peer_id);
         // 进行中的传输：发送端丢弃；接收端删除 .part（关系已解除，不应再续传）。
-        self.outgoing.retain(|_, transfer| transfer.peer_id != peer_id);
+        self.outgoing
+            .retain(|_, transfer| transfer.peer_id != peer_id);
         let incoming_ids: Vec<String> = self
             .incoming
             .iter()
@@ -1057,6 +1172,16 @@ impl Engine {
             .find(|peer| peer.peer.device_id == from)
             .map(|peer| peer.display_name())
             .unwrap_or_else(|| from.to_string());
+        // 双向同时撤销的竞态：本地 peers.json 已被外部改写且不再包含该记录。
+        // 此时外部检测后续已无差异可报，这里补发本机侧的 PeerRevoked 事件。
+        let disk_mtime = self.store.file_mtime_ms(&self.store.peers_path());
+        let externally_removed = disk_mtime != self.peers_mtime
+            && !self
+                .store
+                .load_peers()
+                .unwrap_or_default()
+                .iter()
+                .any(|peer| peer.peer.device_id == from);
         if let Err(e) = self.store.remove_peer(from) {
             out.events.push(RuntimeEvent::Error {
                 message: format!("删除被撤销的配对记录失败（{from}）: {e}"),
@@ -1065,6 +1190,14 @@ impl Engine {
         self.peers.retain(|peer| peer.peer.device_id != from);
         self.peers_mtime = self.store.file_mtime_ms(&self.store.peers_path());
         self.cleanup_peer_relationship(from, out);
+        if externally_removed {
+            out.events.push(RuntimeEvent::PeerRevoked {
+                device_id: from.to_string(),
+                name: name.clone(),
+                reason: "双方均已删除配对记录".to_string(),
+                notified: false,
+            });
+        }
         out.events.push(RuntimeEvent::PeerUnpaired {
             device_id: from.to_string(),
             name,
@@ -1090,6 +1223,8 @@ impl Engine {
             name: peer.display_name(),
         });
         self.online_since.remove(peer_id);
+        // 会话建立本身视为活跃（刷新 90 天不活跃计时）。
+        self.mark_peer_active(peer_id, now_ms());
         // 1) 目录全量快照（含墓碑）。
         let ops = self.catalog.to_sync_ops();
         self.send_peer(
@@ -1141,7 +1276,8 @@ impl Engine {
         }
     }
 
-    fn initiate_session(&mut self, peer_id: &str, out: &mut EngineOutput) {        let Some(peer) = self
+    fn initiate_session(&mut self, peer_id: &str, out: &mut EngineOutput) {
+        let Some(peer) = self
             .peers
             .iter()
             .find(|p| p.peer.device_id == peer_id)
@@ -1203,9 +1339,7 @@ impl Engine {
                     } else {
                         self.online_since
                             .get(&peer_id)
-                            .map(|since| {
-                                now.saturating_sub(*since) >= SESSION_FALLBACK_DELAY_MS
-                            })
+                            .map(|since| now.saturating_sub(*since) >= SESSION_FALLBACK_DELAY_MS)
                             .unwrap_or(false)
                     }
                 }
@@ -1305,7 +1439,8 @@ impl Engine {
             });
         }
         if queued > 0 {
-            out.events.push(RuntimeEvent::ClipboardSpooled { peers: queued });
+            out.events
+                .push(RuntimeEvent::ClipboardSpooled { peers: queued });
         }
     }
 
@@ -1513,8 +1648,7 @@ impl Engine {
             .outgoing
             .values()
             .find(|transfer| {
-                transfer.peer_id == from
-                    && transfer.manifest.entry_id.as_deref() == Some(entry_id)
+                transfer.peer_id == from && transfer.manifest.entry_id.as_deref() == Some(entry_id)
             })
             .map(|transfer| transfer.manifest.clone())
         {
@@ -1732,7 +1866,9 @@ impl Engine {
             let chunk_size = transfer.manifest.chunk_size as u64;
             let start = align_up(from_offset, chunk_size).min(transfer.manifest.size);
             transfer.next_offset = transfer.next_offset.max(start);
-            transfer.acked_offset = transfer.acked_offset.max(from_offset.min(transfer.manifest.size));
+            transfer.acked_offset = transfer
+                .acked_offset
+                .max(from_offset.min(transfer.manifest.size));
             transfer.last_activity_ms = now_ms();
         }
         self.pump_outgoing(transfer_id, out);
@@ -1938,9 +2074,7 @@ impl Engine {
             return;
         };
         let IncomingTransfer {
-            manifest,
-            receiver,
-            ..
+            manifest, receiver, ..
         } = transfer;
         let complete = receiver.received_bytes() == manifest.size && total_bytes == manifest.size;
         if !complete {
@@ -2035,7 +2169,11 @@ impl Engine {
             });
             return;
         }
-        match self.vault_keys.iter_mut().find(|k| k.object_id == object_id) {
+        match self
+            .vault_keys
+            .iter_mut()
+            .find(|k| k.object_id == object_id)
+        {
             Some(existing) => *existing = key,
             None => self.vault_keys.push(key),
         }
@@ -2206,7 +2344,9 @@ impl Engine {
                 .find(|peer| peer.peer.device_id == peer_id)
                 .map(|peer| peer.display_name())
                 .unwrap_or_else(|| peer_id.clone());
-            // 1) 先尽力经现有 E2E 会话通知对端（离线则下次握手会被拒绝，安全兜底）。
+            // 1) 生成离线撤销通知（对端离线时由中继信箱补达），并尝试立即投递。
+            self.ensure_revocation_notice(&peer_id, revocation_reason::USER_REMOVED, now, out);
+            // 2) 先尽力经现有 E2E 会话通知对端（离线则下次握手会被拒绝，安全兜底）。
             let reason = "本机已删除配对记录".to_string();
             let notified = self.send_peer(
                 &peer_id,
@@ -2215,7 +2355,7 @@ impl Engine {
                 },
                 out,
             );
-            // 2) 销毁关系（会话/传输/spool/缓存）。
+            // 3) 销毁关系（会话/传输/spool/缓存）。
             self.cleanup_peer_relationship(&peer_id, out);
             out.events.push(RuntimeEvent::PeerRevoked {
                 device_id: peer_id.clone(),
@@ -2224,6 +2364,7 @@ impl Engine {
                 notified,
             });
         }
+        self.flush_pending_revocations(now, true, out);
 
         // 新增或字段更新的配对记录。
         let mut changes = 0usize;
@@ -2250,6 +2391,274 @@ impl Engine {
             });
             // 新增的在线对端：按正常规则（小 id 立即 / 较大侧兜底延迟）建立会话。
             self.retry_sessions(now, out);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 活跃度（last_seen / 心跳 / 90 天过期）
+    // ------------------------------------------------------------------
+
+    fn mark_peer_active(&mut self, peer_id: &str, now: u64) {
+        if let Some(record) = self
+            .peers
+            .iter_mut()
+            .find(|record| record.peer.device_id == peer_id)
+        {
+            if record.touch(now) {
+                self.peers_dirty = true;
+            }
+        }
+    }
+
+    /// 把内存中的 `last_seen_ms` 更新落盘（每 60s 或断开连接时调用，避免写风暴）。
+    fn flush_peers_if_dirty(&mut self) {
+        if !self.peers_dirty {
+            return;
+        }
+        match self.store.save_peers(&self.peers) {
+            Ok(()) => {
+                self.peers_mtime = self.store.file_mtime_ms(&self.store.peers_path());
+                self.peers_dirty = false;
+            }
+            Err(error) => tracing::warn!(error = %error, "持久化 peers.json（last_seen）失败"),
+        }
+    }
+
+    /// 会话空闲超过 6h 时发应用层 Ping；收到 Ping/Pong 都会刷新 last_seen。
+    fn heartbeat_idle_peers(&mut self, now: u64, out: &mut EngineOutput) {
+        let peer_ids: Vec<String> = self.sessions.keys().cloned().collect();
+        for peer_id in peer_ids {
+            let idle = self
+                .peers
+                .iter()
+                .find(|record| record.peer.device_id == peer_id)
+                .map(|record| now.saturating_sub(record.last_seen_or_paired()))
+                .unwrap_or(0);
+            if idle > HEARTBEAT_IDLE_MS {
+                // send_peer 成功本身也算活跃，会 touch 并落盘。
+                self.send_peer(&peer_id, PeerMessage::Ping { ts_ms: now }, out);
+            }
+        }
+    }
+
+    /// 90 天不活跃过期：生成 inactive_90d 离线撤销通知 → 删除本地记录 → 清理 → emit 事件。
+    fn check_inactive_pairs(&mut self, now: u64, out: &mut EngineOutput) {
+        let expired: Vec<(String, String, u64, u64)> = self
+            .peers
+            .iter()
+            .filter(|record| record.inactivity_expired(now))
+            .map(|record| {
+                (
+                    record.peer.device_id.clone(),
+                    record.display_name(),
+                    record.last_seen_or_paired(),
+                    record.expires_at_ms(),
+                )
+            })
+            .collect();
+        if expired.is_empty() {
+            return;
+        }
+        for (device_id, name, last_seen_ms, expires_at_ms) in expired {
+            self.ensure_revocation_notice(&device_id, revocation_reason::INACTIVE_90D, now, out);
+            if let Err(error) = self.store.remove_peer(&device_id) {
+                out.events.push(RuntimeEvent::Error {
+                    message: format!("删除过期配对记录失败（{device_id}）: {error}"),
+                });
+            }
+            self.peers
+                .retain(|record| record.peer.device_id != device_id);
+            self.peers_dirty = false;
+            self.peers_mtime = self.store.file_mtime_ms(&self.store.peers_path());
+            self.cleanup_peer_relationship(&device_id, out);
+            out.events.push(RuntimeEvent::PeerExpired {
+                device_id,
+                name,
+                last_seen_ms,
+                expires_at_ms,
+            });
+        }
+        self.flush_pending_revocations(now, true, out);
+    }
+
+    // ------------------------------------------------------------------
+    // 离线撤销通知（本地待发队列 / 投递 / 接收验签）
+    // ------------------------------------------------------------------
+
+    /// 从 `pending_revocations.json` 重新加载待发通知（去重、丢弃过期）。
+    fn reload_pending_revocations(&mut self, now: u64) {
+        match self.store.take_pending_revocations() {
+            Ok(notices) => {
+                for notice in notices {
+                    if notice.is_expired(now) {
+                        let _ = self.store.ack_revocation(notice.notice_id());
+                        continue;
+                    }
+                    if !self
+                        .pending_revocations
+                        .iter()
+                        .any(|existing| existing.notice_id() == notice.notice_id())
+                    {
+                        self.pending_revocations.push(notice);
+                    }
+                }
+            }
+            Err(error) => tracing::warn!(error = %error, "加载 pending_revocations.json 失败"),
+        }
+    }
+
+    /// 确保目标有且仅有一条待投递的撤销通知；已存在则触发尽快重试。
+    fn ensure_revocation_notice(
+        &mut self,
+        target: &str,
+        reason: &str,
+        now: u64,
+        out: &mut EngineOutput,
+    ) {
+        self.reload_pending_revocations(now);
+        if let Some(existing) = self
+            .pending_revocations
+            .iter()
+            .find(|notice| notice.content.to == target && !notice.is_expired(now))
+        {
+            self.pending_revocation_last_attempt
+                .remove(existing.notice_id());
+            return;
+        }
+        match RevocationNotice::create(&self.identity, target, reason, now) {
+            Ok(notice) => {
+                if let Err(error) = self.store.queue_revocation(&notice) {
+                    out.events.push(RuntimeEvent::Error {
+                        message: format!("写入离线撤销队列失败: {error}"),
+                    });
+                }
+                out.events.push(RuntimeEvent::RevocationQueued {
+                    device_id: target.to_string(),
+                    notice_id: notice.notice_id().to_string(),
+                    reason: reason.to_string(),
+                });
+                self.pending_revocations.push(notice);
+            }
+            Err(error) => out.events.push(RuntimeEvent::Error {
+                message: format!("生成解除配对通知失败: {error}"),
+            }),
+        }
+    }
+
+    /// 把待发通知通过 `revocation_put` 投递到中继离线信箱；失败保留，下次重试。
+    fn flush_pending_revocations(&mut self, now: u64, force: bool, out: &mut EngineOutput) {
+        if self.pending_revocations.is_empty() {
+            return;
+        }
+        let notices = self.pending_revocations.clone();
+        for notice in notices {
+            let notice_id = notice.notice_id().to_string();
+            if notice.is_expired(now) {
+                self.pending_revocations
+                    .retain(|existing| existing.notice_id() != notice_id);
+                self.pending_revocation_last_attempt.remove(&notice_id);
+                let _ = self.store.ack_revocation(&notice_id);
+                continue;
+            }
+            let last_attempt = self
+                .pending_revocation_last_attempt
+                .get(&notice_id)
+                .copied()
+                .unwrap_or(0);
+            if !force && now.saturating_sub(last_attempt) < REVOCATION_RETRY_INTERVAL_MS {
+                continue;
+            }
+            out.outbound.push(ClientToServer::RevocationPut { notice });
+            self.pending_revocation_last_attempt.insert(notice_id, now);
+        }
+    }
+
+    fn handle_revocation_put_result(
+        &mut self,
+        ok: bool,
+        notice_id: String,
+        message: String,
+        out: &mut EngineOutput,
+    ) {
+        self.pending_revocation_last_attempt.remove(&notice_id);
+        if !ok {
+            tracing::warn!(notice_id = %notice_id, message = %message, "撤销通知投递失败，保留队列等待重试");
+            return;
+        }
+        if let Some(position) = self
+            .pending_revocations
+            .iter()
+            .position(|notice| notice.notice_id() == notice_id)
+        {
+            let notice = self.pending_revocations.remove(position);
+            if let Err(error) = self.store.ack_revocation(&notice_id) {
+                tracing::warn!(notice_id = %notice_id, error = %error, "ack 撤销通知队列失败");
+            }
+            out.events.push(RuntimeEvent::RevocationDelivered {
+                device_id: notice.content.to.clone(),
+                notice_id,
+            });
+        }
+    }
+
+    /// 处理中继推送的离线撤销通知：验签通过才删除本地记录并 ack。
+    fn handle_pending_revocations(
+        &mut self,
+        notices: Vec<RevocationNotice>,
+        out: &mut EngineOutput,
+    ) {
+        let now = now_ms();
+        for notice in notices {
+            let notice_id = notice.notice_id().to_string();
+            if let Err(error) = notice.verify_target(&self.self_id) {
+                tracing::warn!(notice_id = %notice_id, error = %error, "忽略目标非本机的解除配对通知");
+                continue;
+            }
+            let Some(record) = self
+                .peers
+                .iter()
+                .find(|record| record.peer.device_id == notice.content.from)
+                .cloned()
+            else {
+                // 本地已无该配对记录：直接 ack 让中继清理信箱。
+                out.outbound
+                    .push(ClientToServer::RevocationAck { notice_id });
+                continue;
+            };
+            if let Err(error) = notice.verify(&record.peer, now) {
+                tracing::warn!(
+                    notice_id = %notice_id,
+                    peer = %record.peer.device_id,
+                    error = %error,
+                    "解除配对通知验签失败，保留本地记录"
+                );
+                out.events.push(RuntimeEvent::Error {
+                    message: format!(
+                        "收到验签失败的解除配对通知（{}），已忽略",
+                        record.peer.device_id
+                    ),
+                });
+                continue;
+            }
+            let device_id = record.peer.device_id.clone();
+            let name = record.display_name();
+            if let Err(error) = self.store.remove_peer(&device_id) {
+                out.events.push(RuntimeEvent::Error {
+                    message: format!("删除被撤销的配对记录失败（{device_id}）: {error}"),
+                });
+            }
+            self.peers
+                .retain(|record| record.peer.device_id != device_id);
+            self.peers_dirty = false;
+            self.peers_mtime = self.store.file_mtime_ms(&self.store.peers_path());
+            self.cleanup_peer_relationship(&device_id, out);
+            out.events.push(RuntimeEvent::PeerRevocationNotice {
+                device_id,
+                name,
+                reason: notice.content.reason.clone(),
+            });
+            out.outbound
+                .push(ClientToServer::RevocationAck { notice_id });
         }
     }
 
@@ -2284,11 +2693,14 @@ impl Engine {
             }
         }
 
-        // 4) 外部状态文件变更检测（每 2s）。
+        // 4) 外部状态文件变更检测（每 2s），并重试待投递的离线撤销通知。
         if now.saturating_sub(self.last_vault_check_ms) >= 2_000 {
             self.last_vault_check_ms = now;
             self.detect_external_state_changes(now, &mut out);
             self.detect_external_peer_changes(now, &mut out);
+            // CLI 可能在 daemon 运行中写入待发撤销队列，周期重新加载后再重试。
+            self.reload_pending_revocations(now);
+            self.flush_pending_revocations(now, false, &mut out);
         }
 
         // 5) 会话握手重试。
@@ -2302,6 +2714,25 @@ impl Engine {
             .retain(|_, transfer| transfer.last_activity_ms >= stale_before);
         self.incoming
             .retain(|_, transfer| transfer.created_at_ms >= stale_before);
+
+        // 7) last_seen 定期落盘（每 60s，避免写风暴）。
+        if now.saturating_sub(self.last_seen_flush_ms) >= LAST_SEEN_FLUSH_INTERVAL_MS {
+            self.last_seen_flush_ms = now;
+            self.flush_peers_if_dirty();
+        }
+
+        // 8) 90 天不活跃配对过期检测（放在心跳之前：过期判定基于心跳前的活跃时间；
+        //    启动时在 on_authenticated 也会执行一次）。
+        if now.saturating_sub(self.last_inactive_check_ms) >= INACTIVE_PAIR_CHECK_INTERVAL_MS {
+            self.last_inactive_check_ms = now;
+            self.check_inactive_pairs(now, &mut out);
+        }
+
+        // 9) 空闲 >6h 的会话发应用层 Ping（避免长时间在线但无同步被误判过期）。
+        if now.saturating_sub(self.last_heartbeat_check_ms) >= HEARTBEAT_CHECK_INTERVAL_MS {
+            self.last_heartbeat_check_ms = now;
+            self.heartbeat_idle_peers(now, &mut out);
+        }
 
         out
     }
@@ -2355,9 +2786,7 @@ impl Engine {
                     }
                 }
             }
-            RuntimeCommand::Fetch { peer_id, entry_id } => {
-                self.request_fetch(&peer_id, &entry_id)
-            }
+            RuntimeCommand::Fetch { peer_id, entry_id } => self.request_fetch(&peer_id, &entry_id),
         }
     }
 
@@ -2380,9 +2809,6 @@ impl Engine {
 
     /// 用会话密钥加密并加入待发送队列。返回是否成功（失败说明无会话或加密错误）。
     fn send_peer(&mut self, peer_id: &str, message: PeerMessage, out: &mut EngineOutput) -> bool {
-        let Some(session) = self.sessions.get_mut(peer_id) else {
-            return false;
-        };
         let plaintext = match message.to_bytes() {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -2392,12 +2818,18 @@ impl Engine {
                 return false;
             }
         };
-        match session.encrypt("peer", &plaintext) {
+        let encrypted = match self.sessions.get_mut(peer_id) {
+            Some(session) => session.encrypt("peer", &plaintext),
+            None => return false,
+        };
+        match encrypted {
             Ok(envelope) => {
                 out.outbound.push(ClientToServer::Relay {
                     to: peer_id.to_string(),
                     envelope,
                 });
+                // 发送任意 E2E 消息都视为活跃（刷新 90 天不活跃计时）。
+                self.mark_peer_active(peer_id, now_ms());
                 true
             }
             Err(e) => {
@@ -2428,6 +2860,11 @@ impl Engine {
     /// 供 CLI/状态展示：当前待发送（离线）消息数量。
     pub fn spool_count(&self) -> usize {
         self.spool.count().unwrap_or(0)
+    }
+
+    /// 待投递的离线撤销通知数量（CLI/诊断用）。
+    pub fn pending_revocation_count(&self) -> usize {
+        self.pending_revocations.len()
     }
 
     /// 供测试/诊断：当前是否有待处理的本机剪切板变化。
@@ -2470,6 +2907,17 @@ pub fn hash_short(hash: &str) -> &str {
     } else {
         hash
     }
+}
+
+/// Unix 毫秒 → 本地时间字符串（事件摘要用）。
+fn format_epoch_ms(ms: u64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms as i64)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| format!("{ms}ms"))
 }
 
 #[cfg(test)]

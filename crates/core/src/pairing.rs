@@ -1,4 +1,4 @@
-﻿//! 设备配对：一次性二维码 + 6 位短认证串（SAS），防中继服务器 MITM。
+//! 设备配对：一次性二维码 + 6 位短认证串（SAS），防中继服务器 MITM。
 //!
 //! 流程：
 //! 1. A 生成一次性配对码（8 位数字）与临时 X25519 密钥，把邀请信息经中继挂起（只挂 code_hash）；
@@ -123,9 +123,46 @@ pub struct PairRecord {
     pub label: String,
     /// 配对密钥指纹（用于两端核对/审计，不保存配对密钥本身）。
     pub pairing_fingerprint: String,
+    /// 最后一次与对端成功建立 E2E 会话/收到对端消息/心跳的时间。
+    ///
+    /// 用于"90 天不活跃需重新配对"策略；旧版本记录缺省时回退到 `paired_at_ms`。
+    #[serde(default)]
+    pub last_seen_ms: u64,
 }
 
+/// 配对不活跃窗口：超过 90 天没有任何成功同步/心跳，配对自动失效。
+pub const INACTIVE_PAIR_EXPIRY_MS: u64 = 90 * 24 * 60 * 60 * 1000;
+
 impl PairRecord {
+    /// 刷新活跃时间（仅在时间前进时更新）。
+    pub fn touch(&mut self, now_ms: u64) -> bool {
+        if now_ms > self.last_seen_or_paired() {
+            self.last_seen_ms = now_ms;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn last_seen_or_paired(&self) -> u64 {
+        if self.last_seen_ms == 0 {
+            self.paired_at_ms
+        } else {
+            self.last_seen_ms
+        }
+    }
+
+    /// 是否已超过 90 天未活跃（需重新配对）。
+    pub fn inactivity_expired(&self, now_ms: u64) -> bool {
+        now_ms.saturating_sub(self.last_seen_or_paired()) > INACTIVE_PAIR_EXPIRY_MS
+    }
+
+    /// 该配对记录的过期时间点（展示/审计用）。
+    pub fn expires_at_ms(&self) -> u64 {
+        self.last_seen_or_paired()
+            .saturating_add(INACTIVE_PAIR_EXPIRY_MS)
+    }
+
     pub fn display_name(&self) -> String {
         if self.label.trim().is_empty() {
             self.peer.name.clone()
@@ -211,13 +248,15 @@ impl PairingInitiator {
         let shared = self
             .shared
             .ok_or_else(|| CoreError::Protocol("配对密钥尚未派生".into()))?;
+        let now = now_ms();
         Ok(PairRecord {
             v: PAIRING_VERSION,
             label: peer.name.clone(),
             peer,
             relay_url: self.invite.relay_url.clone(),
-            paired_at_ms: now_ms(),
+            paired_at_ms: now,
             pairing_fingerprint: blake3_hex(&shared)[..16].to_string(),
+            last_seen_ms: now,
         })
     }
 }
@@ -277,13 +316,15 @@ impl PairingResponder {
     }
 
     pub fn finish(&self) -> Result<PairRecord> {
+        let now = now_ms();
         Ok(PairRecord {
             v: PAIRING_VERSION,
             label: self.invite.device.name.clone(),
             peer: self.invite.device.clone(),
             relay_url: self.invite.relay_url.clone(),
-            paired_at_ms: now_ms(),
+            paired_at_ms: now,
             pairing_fingerprint: blake3_hex(&self.shared)[..16].to_string(),
+            last_seen_ms: now,
         })
     }
 }
@@ -345,14 +386,8 @@ fn pairing_transcript(
     Ok(canonical_json(&transcript)?.into_bytes())
 }
 
-fn pairing_shared(
-    eph: &StaticSecret,
-    peer_eph: &[u8; 32],
-    transcript: &[u8],
-) -> Result<[u8; 32]> {
-    let dh = eph
-        .diffie_hellman(&XPublicKey::from(*peer_eph))
-        .to_bytes();
+fn pairing_shared(eph: &StaticSecret, peer_eph: &[u8; 32], transcript: &[u8]) -> Result<[u8; 32]> {
+    let dh = eph.diffie_hellman(&XPublicKey::from(*peer_eph)).to_bytes();
     let salt = blake3::hash(transcript);
     let okm = hkdf_expand(
         &dh,
@@ -409,7 +444,11 @@ mod tests {
         let (a_id, b_id) = identities();
         let mut initiator = PairingInitiator::start(&a_id, "ws://127.0.0.1:8787");
         let (invite, code) = decode_qr(&initiator.qr_string().unwrap()).unwrap();
-        let wrong = if code == "00000000" { "00000001" } else { "00000000" };
+        let wrong = if code == "00000000" {
+            "00000001"
+        } else {
+            "00000000"
+        };
         let responder = PairingResponder::accept(&b_id, &invite, wrong).unwrap();
         initiator.handle_join(&responder.join).unwrap();
         assert_ne!(initiator.sas().unwrap(), responder.sas());

@@ -1,4 +1,4 @@
-﻿//! 阶段 2 端到端：断线重连 + 离线 spool 补发 + 中继重启后的透明自动重连。
+//! 阶段 2 端到端：断线重连 + 离线 spool 补发 + 中继重启后的透明自动重连。
 //!
 //! 两个场景：
 //! 1. [`spool_replay_after_peer_online`]：B 离线时 A 写入剪切板 → 事件进 A 本地 spool；
@@ -51,9 +51,10 @@ async fn spool_replay_after_peer_online() -> Result<()> {
     let b_id = b.device_id().to_string();
     a.wait_session(&b_id).await?;
     b.wait_session(&a_id).await?;
-    a.wait_event(DEFAULT_EVENT_TIMEOUT, |event| {
-        matches!(event, RuntimeEvent::SpoolReplayed { count, .. } if *count >= 1)
-    })
+    a.wait_event(
+        DEFAULT_EVENT_TIMEOUT,
+        |event| matches!(event, RuntimeEvent::SpoolReplayed { count, .. } if *count >= 1),
+    )
     .await?;
 
     let applied = b.recv_clipboard(DEFAULT_EVENT_TIMEOUT).await?;

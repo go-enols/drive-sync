@@ -1,0 +1,110 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "mobile/android/**"
+      - ".github/workflows/android.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-apk:
+    name: Build debug APK (sideload)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+
+      - name: Set up NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build Rust native libs (.so for 3 ABIs)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk \
+            -t arm64-v8a \
+            -t armeabi-v7a \
+            -t x86_64 \
+            -o mobile/android/app/src/main/jniLibs \
+            build -p drive-mobile --release --locked
+          find mobile/android/app/src/main/jniLibs -name '*.so' -print
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Generate Gradle wrapper
+        working-directory: mobile/android
+        run: gradle wrapper --gradle-version 8.13 --distribution-type bin
+
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Collect APK
+        run: |
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk drive-sync-android-debug.apk
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk drive-sync-v0.2.0-android-debug.apk
+          ls -lh drive-sync-android-debug.apk drive-sync-v0.2.0-android-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drive-sync-android-debug.apk
+          path: |
+            drive-sync-android-debug.apk
+            drive-sync-v0.2.0-android-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-reports
+          path: |
+            mobile/android/**/build/reports/**
+            mobile/android/**/build/outputs/logs/**
+          if-no-files-found: ignore
+          retention-days: 7

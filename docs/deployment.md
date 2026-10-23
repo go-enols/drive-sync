@@ -29,6 +29,7 @@ cargo build --release -p drive-relay
 # 常用参数（以 --help 为准）
 --bind 127.0.0.1:8787        # 监听地址（生产建议只监听 127.0.0.1，由反代暴露）
 --token <token>              # 设备连接令牌（32B 随机；也可 --token-file 或环境变量 DRIVE_RELAY_TOKEN）
+--data-dir /var/lib/drive    # 中继控制面状态目录（撤销通知离线信箱；默认 ./drive-relay-state）
 --vault-dir /data/vault      # 可选云端暂存的密文目录（不配置则禁用暂存）
 --vault-quota-mib 1024       # 每设备暂存配额（MiB，默认 1024）
 --vault-max-object-mib 8     # 单对象上限（MiB，默认 8）
@@ -41,6 +42,10 @@ cargo build --release -p drive-relay
 ```
 
 环境变量：`DRIVE_RELAY_TOKEN` 优先于命令行（避免 token 出现在 `ps` 里）。
+
+> 存储边界说明：中继仍**不存储任何转发内容**。`--data-dir` 只保存"离线解除配对通知"这类
+> 签名控制面元数据（含 from/to/时间，≤90 天，供对端上线后收取），以及暂存索引；转发帧、
+> 剪切板、目录、软件本体一律不落盘。
 
 ## 3. TLS 反向代理
 
@@ -110,7 +115,7 @@ Type=simple
 User=drive
 Group=drive
 Environment=DRIVE_RELAY_TOKEN=<32B随机hex>
-ExecStart=/usr/local/bin/drive-relay --bind 127.0.0.1:8787 --vault-dir /var/lib/drive/vault
+ExecStart=/usr/local/bin/drive-relay --bind 127.0.0.1:8787 --data-dir /var/lib/drive --vault-dir /var/lib/drive/vault
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65536
@@ -147,7 +152,7 @@ USER drive
 VOLUME ["/data"]
 EXPOSE 8787
 ENTRYPOINT ["drive-relay"]
-CMD ["--bind", "0.0.0.0:8787", "--vault-dir", "/data/vault"]
+CMD ["--bind", "0.0.0.0:8787", "--data-dir", "/data", "--vault-dir", "/data/vault"]
 ```
 
 ```bash

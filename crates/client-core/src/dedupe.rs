@@ -142,10 +142,7 @@ impl RecentApplied {
     }
 
     pub fn prune(&mut self, now_ms: u64) {
-        loop {
-            let Some((hash, ts)) = self.order.front().cloned() else {
-                break;
-            };
+        while let Some((hash, ts)) = self.order.front().cloned() {
             if now_ms.saturating_sub(ts) <= self.ttl_ms {
                 break;
             }

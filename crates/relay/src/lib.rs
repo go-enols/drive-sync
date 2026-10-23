@@ -1,4 +1,4 @@
-﻿//! drive-sync 中继服务器（库）。
+//! drive-sync 中继服务器（库）。
 //!
 //! 实现 `docs/protocol.md` §4 / §5 / §11：
 //! - `GET /ws`：WebSocket；首帧 `hello` 认证（共享 access_token 常量时间比较 + Ed25519 签名 +
@@ -7,6 +7,9 @@
 //! - presence 广播（连接/断开）、配对邀请路由（`pair_announce`/`pair_join`，TTL/一次性/失败限流）；
 //! - E2E 握手与密文信封转发（`session_init`/`session_ack`/`relay`），发往离线设备不缓存；
 //! - 可选加密暂存（只存客户端密文；TTL 强约束 60s..30d；文件 + 索引落盘；后台清理）；
+//! - 撤销通知离线信箱（`revocation_put`/`pending_revocations`/`revocation_ack`）：
+//!   中继只存发送方签名的控制面元数据（≤8 KiB/条），目标上线后投递、ack 后删除，
+//!   TTL ≤90 天；持久化在 `<data_dir>/revocations/index.json`；
 //! - 限额：单帧 8 MiB、空闲 90s 断开、每连接令牌桶默认 2000 帧/秒（突发 4000）。
 //!   令牌不足时先背压等待（读循环暂停 → TCP 窗口自然限速发送端，不丢帧），
 //!   只有等待超过 `rate_limit_max_wait_ms`（默认 2000ms）才丢弃该帧并回 `rate_limited`。
@@ -27,8 +30,10 @@
 
 mod auth;
 mod conn;
+mod fsutil;
 mod pair;
 mod ratelimit;
+mod revocation;
 mod state;
 mod vault;
 
@@ -44,6 +49,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use revocation::{RevocationLimits, RevocationStore};
 use state::RelayState;
 use vault::{VaultLimits, VaultStore};
 
@@ -90,6 +96,15 @@ pub struct RelayConfig {
     pub vault_max_objects: usize,
     /// 暂存过期清理间隔（秒，协议要求 60s）。
     pub vault_reap_interval_secs: u64,
+    /// 中继状态目录（撤销通知离线信箱落盘位置：`<data_dir>/revocations/`）。
+    /// 默认 `./drive-relay-state`；目录在首次写入撤销通知时创建。
+    pub data_dir: PathBuf,
+    /// 每个发送方最多保留的未处理撤销通知数（默认 20；`0` 表示不限制）。
+    pub revocation_max_per_sender: usize,
+    /// 中继最多保留的未处理撤销通知总数（默认 500；`0` 表示不限制）。
+    pub revocation_max_total: usize,
+    /// 撤销通知过期清理间隔（秒，默认 300 = 5 分钟）。
+    pub revocation_reap_interval_secs: u64,
 }
 
 impl RelayConfig {
@@ -123,6 +138,10 @@ impl Default for RelayConfig {
             vault_quota_bytes: 1024 * 1024 * 1024,
             vault_max_objects: 1000,
             vault_reap_interval_secs: 60,
+            data_dir: PathBuf::from("./drive-relay-state"),
+            revocation_max_per_sender: 20,
+            revocation_max_total: 500,
+            revocation_reap_interval_secs: 300,
         }
     }
 }
@@ -221,9 +240,21 @@ pub async fn start(config: RelayConfig) -> Result<RelayHandle> {
 
     let vault_interval = Duration::from_secs(config.vault_reap_interval_secs.max(1));
     let pair_interval = Duration::from_secs(config.pair_cleanup_interval_secs.max(1));
+    let revocation_interval = Duration::from_secs(config.revocation_reap_interval_secs.max(1));
     let bind = config.bind;
     let has_vault = vault.is_some();
-    let state = RelayState::new(config, vault);
+
+    // 撤销通知离线信箱：加载索引并做启动清理（目录不存在/索引损坏都不阻塞启动）。
+    let revocations = RevocationStore::open(
+        &config.data_dir,
+        RevocationLimits {
+            max_per_sender: config.revocation_max_per_sender,
+            max_total: config.revocation_max_total,
+        },
+    )
+    .await;
+
+    let state = RelayState::new(config, vault, revocations);
 
     let listener = TcpListener::bind(bind)
         .await
@@ -250,6 +281,10 @@ pub async fn start(config: RelayConfig) -> Result<RelayHandle> {
         background.push(tokio::spawn(vault_reaper(state.clone(), vault_interval)));
     }
     background.push(tokio::spawn(pair_reaper(state.clone(), pair_interval)));
+    background.push(tokio::spawn(revocation_reaper(
+        state.clone(),
+        revocation_interval,
+    )));
 
     tracing::info!(
         %addr,
@@ -279,6 +314,9 @@ fn validate_config(config: &RelayConfig) -> Result<()> {
     if config.vault_dir.is_some() && config.vault_quota_bytes == 0 {
         bail!("启用暂存时 vault_quota_bytes 不能为 0");
     }
+    if config.data_dir.as_os_str().is_empty() {
+        bail!("data_dir 不能为空（撤销通知离线信箱需要状态目录）");
+    }
     Ok(())
 }
 
@@ -303,6 +341,20 @@ async fn vault_reaper(state: Arc<RelayState>, interval: Duration) {
             }
             Ok(_) => {}
             Err(error) => tracing::warn!(%error, "暂存清理任务失败"),
+        }
+    }
+}
+
+/// 后台清理过期撤销通知（启动时已在 `RevocationStore::open` 中全量清理一次）。
+async fn revocation_reaper(state: Arc<RelayState>, interval: Duration) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ticker.tick().await; // 跳过第一次立即触发
+    loop {
+        ticker.tick().await;
+        let count = state.revocations.reap().await;
+        if count > 0 {
+            tracing::info!(count, "清理过期撤销通知");
         }
     }
 }
@@ -342,6 +394,10 @@ mod tests {
         assert_eq!(config.vault_max_objects, 1000);
         assert_eq!(config.vault_reap_interval_secs, 60);
         assert_eq!(config.pair_join_limit_per_min, 5);
+        assert_eq!(config.data_dir, PathBuf::from("./drive-relay-state"));
+        assert_eq!(config.revocation_max_per_sender, 20);
+        assert_eq!(config.revocation_max_total, 500);
+        assert_eq!(config.revocation_reap_interval_secs, 300);
     }
 
     /// 大文件吞吐推导：默认 2000 帧/s × 64 KiB/块 = 125 MiB/s，满足架构 >20MB/s 目标。

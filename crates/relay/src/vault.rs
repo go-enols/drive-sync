@@ -1,4 +1,4 @@
-﻿//! 可选加密暂存（协议 §7.4 / §4.5）。
+//! 可选加密暂存（协议 §7.4 / §4.5）。
 //!
 //! 服务端只保存客户端已加密的密文：
 //! - 落盘布局：`<vault_dir>/index.json` + `<vault_dir>/<object_id>.bin`；
@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use drive_core::util::{now_ms, random_hex};
+use drive_core::util::now_ms;
 use drive_core::vault::{effective_ttl_secs, VaultMeta, VaultObjectInfo};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -291,10 +291,7 @@ impl VaultStore {
         if self.limits.max_objects > 0 && new_count > self.limits.max_objects {
             return Err(VaultError::new(
                 "vault_quota_exceeded",
-                format!(
-                    "单设备暂存对象数超过上限（{} 个）",
-                    self.limits.max_objects
-                ),
+                format!("单设备暂存对象数超过上限（{} 个）", self.limits.max_objects),
             ));
         }
 
@@ -307,7 +304,7 @@ impl VaultStore {
         };
 
         // 先写对象文件（原子替换），再更新内存索引与落盘索引。
-        write_atomic(&object_path(&self.dir, object_id), &ciphertext)
+        crate::fsutil::write_atomic(&object_path(&self.dir, object_id), &ciphertext)
             .await
             .map_err(|error| {
                 warn!(%error, "写入暂存对象文件失败");
@@ -479,41 +476,7 @@ async fn persist_index(dir: &Path, inner: &VaultInner) -> std::io::Result<()> {
         objects: inner.objects.clone(),
     };
     let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
-    write_atomic(&dir.join(INDEX_FILE), &json).await
-}
-
-/// 原子写：同目录临时文件 + rename；Windows 上 rename 不能覆盖已存在文件，
-/// 退化为「删除目标后重命名」（窗口极小，原型可接受）。
-async fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| std::io::Error::other("目标路径没有父目录"))?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("object");
-    let tmp_path = dir.join(format!(".{file_name}.tmp-{}", random_hex(4)));
-    tokio::fs::write(&tmp_path, data).await?;
-    match tokio::fs::rename(&tmp_path, path).await {
-        Ok(()) => Ok(()),
-        Err(first_error) => {
-            match tokio::fs::remove_file(path).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => {
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
-                    return Err(first_error);
-                }
-            }
-            match tokio::fs::rename(&tmp_path, path).await {
-                Ok(()) => Ok(()),
-                Err(error) => {
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
-                    Err(error)
-                }
-            }
-        }
-    }
+    crate::fsutil::write_atomic(&dir.join(INDEX_FILE), &json).await
 }
 
 #[cfg(test)]
@@ -581,10 +544,7 @@ mod tests {
             .await
             .expect("上传成功");
         let min_expiry = before + MIN_VAULT_TTL_SECS * 1000;
-        assert!(
-            record.expires_at_ms >= min_expiry,
-            "TTL 下限必须强制为 60s"
-        );
+        assert!(record.expires_at_ms >= min_expiry, "TTL 下限必须强制为 60s");
         let record = store
             .put("dev-a", "obj-ttl2", meta("y"), b"data".to_vec(), u64::MAX)
             .await
@@ -643,13 +603,7 @@ mod tests {
     async fn object_too_large_rejected() {
         let (_dir, store) = temp_store().await;
         let error = store
-            .put(
-                "dev-a",
-                "obj-big",
-                meta("x"),
-                vec![0u8; 1025],
-                60,
-            )
+            .put("dev-a", "obj-big", meta("x"), vec![0u8; 1025], 60)
             .await
             .expect_err("超过单对象上限必须拒绝");
         assert_eq!(error.code, "payload_too_large");
@@ -777,8 +731,11 @@ mod tests {
                 .expect("解析索引");
         index["objects"]["obj-drop"]["expires_at_ms"] =
             serde_json::json!(now_ms().saturating_sub(1));
-        std::fs::write(&index_path, serde_json::to_vec_pretty(&index).expect("序列化索引"))
-            .expect("写回索引");
+        std::fs::write(
+            &index_path,
+            serde_json::to_vec_pretty(&index).expect("序列化索引"),
+        )
+        .expect("写回索引");
         // 孤儿文件：不在索引里，启动清理应删除。
         tokio::fs::write(dir.path().join("orphan.bin"), b"orphan")
             .await

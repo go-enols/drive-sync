@@ -1,4 +1,4 @@
-﻿//! `drive_client::Runtime` 节点封装（阶段 2 双/多设备端到端测试用）。
+//! `drive_client::Runtime` 节点封装（阶段 2 双/多设备端到端测试用）。
 //!
 //! 目标：让测试用**库 API**（而不是 CLI 子进程）驱动真实客户端运行时：
 //! - [`ClientNode::start`]：打开数据目录 + 异步 Runtime（自动重连、会话、心跳）；
@@ -126,11 +126,7 @@ impl ClientNode {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             // 先检查缓存中是否有满足条件的事件。
-            if let Some(index) = self
-                .pending_events
-                .iter()
-                .position(|event| predicate(event))
-            {
+            if let Some(index) = self.pending_events.iter().position(&mut predicate) {
                 if let Some(event) = self.pending_events.remove(index) {
                     return Ok(event);
                 }
@@ -297,8 +293,7 @@ pub async fn pair_nodes(
 
 /// 在 `dir` 下生成随机文件并返回路径（用于目录/文件传输测试）。
 pub fn write_random_file(dir: &Path, name: &str, size: usize) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir)
-        .with_context(|| format!("创建目录失败: {}", dir.display()))?;
+    std::fs::create_dir_all(dir).with_context(|| format!("创建目录失败: {}", dir.display()))?;
     let path = dir.join(name);
     let data = random_bytes(size);
     std::fs::write(&path, &data).with_context(|| format!("写测试文件失败: {}", path.display()))?;

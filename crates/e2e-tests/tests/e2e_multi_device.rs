@@ -1,4 +1,4 @@
-﻿//! 阶段 2 端到端：2~3 设备并发（A 同时与 B、C 配对；B/C 未互相配对）。
+//! 阶段 2 端到端：2~3 设备并发（A 同时与 B、C 配对；B/C 未互相配对）。
 //!
 //! 覆盖：
 //! 1. A↔B、A↔C 各建立 E2E 会话（B/C 之间不应建会话，见架构 §14 第 8 条）；
@@ -72,10 +72,7 @@ async fn three_devices_clipboard_and_concurrent_fetch() -> Result<()> {
     assert_eq!(applied_c.as_text()?, "three-device clipboard");
 
     // 2) 目录：A 添加一个条目 → B、C 都应看到 have_list / 合并目录。
-    let entry = a
-        .handle()
-        .catalog_add(CatalogAddParams::new(&src))
-        .await?;
+    let entry = a.handle().catalog_add(CatalogAddParams::new(&src)).await?;
     b.wait_event(DEFAULT_EVENT_TIMEOUT, |event| {
         matches!(event, RuntimeEvent::PeerHaveList { entry_ids, .. } if entry_ids.contains(&entry))
     })
@@ -105,8 +102,16 @@ async fn three_devices_clipboard_and_concurrent_fetch() -> Result<()> {
             return Err(error);
         }
     };
-    assert_eq!(file_blake3(&path_b)?, src_hash, "B 收到的文件 BLAKE3 不一致");
-    assert_eq!(file_blake3(&path_c)?, src_hash, "C 收到的文件 BLAKE3 不一致");
+    assert_eq!(
+        file_blake3(&path_b)?,
+        src_hash,
+        "B 收到的文件 BLAKE3 不一致"
+    );
+    assert_eq!(
+        file_blake3(&path_c)?,
+        src_hash,
+        "C 收到的文件 BLAKE3 不一致"
+    );
 
     a.shutdown().await?;
     b.shutdown().await?;

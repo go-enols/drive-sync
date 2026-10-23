@@ -1,4 +1,4 @@
-﻿//! 文件中转（软件本体/大文件）：分块清单与接收端落盘校验。
+//! 文件中转（软件本体/大文件）：分块清单与接收端落盘校验。
 //!
 //! 数据只在设备间端到端加密传输，中继服务器只转发密文分块，不落盘。
 //! 原型采用"有序流 + 断点偏移"：接收端只接受连续块，中断后从已收字节数续传；
@@ -80,10 +80,7 @@ impl TransferManifest {
     /// 校验清单自身是否合法。
     pub fn validate(&self) -> Result<()> {
         if self.v != 1 {
-            return Err(CoreError::Invalid(format!(
-                "不支持的传输版本: {}",
-                self.v
-            )));
+            return Err(CoreError::Invalid(format!("不支持的传输版本: {}", self.v)));
         }
         if self.chunk_size < MIN_CHUNK_SIZE || self.chunk_size > MAX_CHUNK_SIZE {
             return Err(CoreError::Invalid(format!(
@@ -94,7 +91,8 @@ impl TransferManifest {
         if self.file_name.is_empty() || self.file_name.contains(['/', '\\']) {
             return Err(CoreError::Invalid("文件名非法（不允许路径分隔符）".into()));
         }
-        if self.content_hash.len() != 64 || !self.content_hash.chars().all(|c| c.is_ascii_hexdigit())
+        if self.content_hash.len() != 64
+            || !self.content_hash.chars().all(|c| c.is_ascii_hexdigit())
         {
             return Err(CoreError::Invalid("content_hash 必须是 64 字符 hex".into()));
         }
@@ -292,7 +290,10 @@ impl FileChunker {
     pub fn open(path: &Path, entry_id: Option<String>, chunk_size: u32) -> Result<Self> {
         let meta = std::fs::metadata(path)?;
         if !meta.is_file() {
-            return Err(CoreError::Invalid(format!("不是普通文件: {}", path.display())));
+            return Err(CoreError::Invalid(format!(
+                "不是普通文件: {}",
+                path.display()
+            )));
         }
         let mut hasher = blake3::Hasher::new();
         let mut file = File::open(path)?;
@@ -357,8 +358,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let data = b"drive-sync chunked transfer test payload".repeat(1000);
         let hash = blake3_hex(&data);
-        let manifest = TransferManifest::new("out.bin", data.len() as u64, hash, None)
-            .with_chunk_size(4096);
+        let manifest =
+            TransferManifest::new("out.bin", data.len() as u64, hash, None).with_chunk_size(4096);
         let mut rx = TransferReceiver::new(manifest.clone(), &dir).unwrap();
         for (_, offset, len) in chunk_plan(data.len() as u64, manifest.chunk_size) {
             rx.push_chunk(offset, &data[offset as usize..(offset + len) as usize])

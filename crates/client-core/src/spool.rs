@@ -1,4 +1,4 @@
-﻿//! 离线 spool：对端不在线时暂存待发 PeerMessage，上限 100 条 / 16 MiB / TTL 24h
+//! 离线 spool：对端不在线时暂存待发 PeerMessage，上限 100 条 / 16 MiB / TTL 24h
 //! （协议 §7.1、§8.3）。
 //!
 //! 每个待发消息一个 JSON 文件（`spool/{created:016x}-{seq:016x}-{id}.json`），
@@ -154,9 +154,7 @@ impl Spool {
                 }
             }
         }
-        items.sort_by(|a, b| {
-            (a.created_at_ms, a.origin_seq).cmp(&(b.created_at_ms, b.origin_seq))
-        });
+        items.sort_by_key(|item| (item.created_at_ms, item.origin_seq));
         Ok(items)
     }
 
@@ -167,9 +165,7 @@ impl Spool {
             .into_iter()
             .filter(|item| item.peer_id == peer_id)
             .collect();
-        items.sort_by(|a, b| {
-            (a.created_at_ms, a.origin_seq).cmp(&(b.created_at_ms, b.origin_seq))
-        });
+        items.sort_by_key(|item| (item.created_at_ms, item.origin_seq));
         Ok(items)
     }
 
@@ -325,9 +321,7 @@ mod tests {
             if let PeerMessage::Clipboard { event } = &mut msg {
                 event.origin_seq = i;
             }
-            spool
-                .push(SpoolItem::new("dev-b", msg, i, 60_000))
-                .unwrap();
+            spool.push(SpoolItem::new("dev-b", msg, i, 60_000)).unwrap();
         }
         assert_eq!(spool.count().unwrap(), 2);
     }

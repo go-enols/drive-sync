@@ -1,4 +1,4 @@
-﻿//! 对称加密原语：XChaCha20-Poly1305 AEAD 与 HKDF-SHA256。
+//! 对称加密原语：XChaCha20-Poly1305 AEAD 与 HKDF-SHA256。
 
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
@@ -49,7 +49,13 @@ pub fn open(key: &[u8; KEY_LEN], aad: &[u8], sealed: &[u8]) -> Result<Vec<u8>> {
     let (nonce, ciphertext) = sealed.split_at(NONCE_LEN);
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
     cipher
-        .decrypt(XNonce::from_slice(nonce), Payload { msg: ciphertext, aad })
+        .decrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| CoreError::Crypto("AEAD 解密失败（密钥错误、AAD 不匹配或数据损坏）".into()))
 }
 

@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 resolver = "2"
 members = [
     "crates/core",
@@ -6,6 +6,8 @@ members = [
     "crates/client-core",
     "crates/cli",
     "crates/e2e-tests",
+    "crates/mobile-core",
+    "crates/updater",
 ]
 
 [workspace.package]
@@ -19,6 +21,7 @@ repository = "https://example.invalid/drive-sync"
 drive-core = { path = "crates/core" }
 drive-relay = { path = "crates/relay" }
 drive-client = { path = "crates/client-core" }
+drive-updater = { path = "crates/updater" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

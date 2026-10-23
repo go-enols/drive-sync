@@ -1,0 +1,12 @@
+# XcodeGen 生成物（不要提交，CI / 本地用 xcodegen generate 重建）
+DriveSync.xcodeproj/
+# 本地构建产物
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+# Rust 静态库（CI / scripts/build-ffi.sh 生成后放到这里）
+ffi/iphoneos/*.a
+ffi/iphonesimulator/*.a
+# macOS
+.DS_Store

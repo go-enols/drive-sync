@@ -1,4 +1,4 @@
-﻿//! 客户端通用工具：文件哈希、时间、路径处理。
+//! 客户端通用工具：文件哈希、时间、路径处理。
 
 use std::fs::File;
 use std::io::Read;
@@ -11,8 +11,7 @@ pub use drive_core::util::{b64d, b64e, blake3_hex, now_ms, random_hex};
 
 /// 计算文件大小与 BLAKE3 摘要（流式，避免大文件占内存）。
 pub fn hash_file(path: &Path) -> Result<(u64, String)> {
-    let mut file =
-        File::open(path).with_context(|| format!("打开文件失败: {}", path.display()))?;
+    let mut file = File::open(path).with_context(|| format!("打开文件失败: {}", path.display()))?;
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; 256 * 1024];
     let mut total = 0u64;
@@ -40,7 +39,9 @@ pub fn file_mtime_ms(path: &Path) -> Option<u64> {
 
 /// 当前 Unix 毫秒（`SystemTime` 版本，便于比较文件时间）。
 pub fn system_time_ms(t: SystemTime) -> Option<u64> {
-    t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as u64)
+    t.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
 }
 
 /// 原子写文本文件（同目录临时文件 + rename，Windows 上 rename 覆盖已存在文件）。

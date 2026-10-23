@@ -49,8 +49,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxkbcommon-dev libwayland-dev
-      - name: Install clippy
-        run: rustup component add clippy
+      - name: Install pinned toolchain + clippy
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+          rustup component add clippy --toolchain 1.96.0
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 

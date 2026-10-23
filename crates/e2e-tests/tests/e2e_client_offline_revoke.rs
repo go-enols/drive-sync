@@ -72,7 +72,7 @@ async fn wait_relay_index_empty(state: &Path, timeout: Duration) -> Result<()> {
 }
 
 fn peers(dir: &Path) -> Result<Vec<drive_core::pairing::PairRecord>> {
-    Ok(Store::open(dir)?.load_peers()?)
+    Store::open(dir)?.load_peers()
 }
 
 async fn assert_clipboard_not_synced(a: &mut ClientNode, b: &mut ClientNode) -> Result<()> {

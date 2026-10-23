@@ -166,7 +166,9 @@ fn is_http_url(url: &str) -> bool {
 fn local_path(url: &str) -> Result<PathBuf> {
     let url = url.trim();
     if let Some(rest) = url.strip_prefix("file://") {
-        let text = percent_decode(rest);
+        // 仅在 Windows 分支会修改 text；Linux 上 mut 看似多余但必须保留。
+        #[allow(unused_mut)]
+        let mut text = percent_decode(rest);
         // `file:///D:/path` → `/D:/path`：Windows 盘符前的前导 `/` 要去掉。
         #[cfg(windows)]
         {

@@ -1,4 +1,4 @@
-//! E2E 会话：连接级前向保密（每次连接重新协商），身份由配对阶段的 Ed25519 公钥认证。
+﻿//! E2E 会话：连接级前向保密（每次连接重新协商），身份由配对阶段的 Ed25519 公钥认证。
 //!
 //! 握手经中继转发（中继只看到公钥与签名，无法解密后续内容）：
 //! - 发起方 → 对端：`SessionInitMsg`（临时 X25519 公钥 + Ed25519 签名）
@@ -350,7 +350,7 @@ fn ack_sign_input(init: &SessionInitContent, ack: &SessionAckContent) -> Result<
 pub fn session_init_summary(msg: &SessionInitMsg) -> String {
     format!(
         "{} → {} ({})",
-        msg.content.from, msg.content.to, &msg.content.session_id
+        msg.content.from, msg.content.to, msg.content.session_id
     )
 }
 

@@ -91,7 +91,9 @@ class MainActivity : AppCompatActivity() {
         // 自动检查更新：每天最多一次；发现新版本时弹窗提示（Android 侧载无法静默安装）。
         UpdateChecker.maybeAutoCheck(this) { info ->
             if (!isFinishing && !isDestroyed) {
-                UpdateChecker.showDialog(this, info)
+                UpdateChecker.showDialog(this, info) {
+                    startActivity(Intent(this, SettingsActivity::class.java))
+                }
             }
         }
     }

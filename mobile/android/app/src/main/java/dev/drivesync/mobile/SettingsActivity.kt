@@ -9,6 +9,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.switchmaterial.SwitchMaterial
 import java.io.File
 
@@ -90,6 +92,57 @@ class SettingsActivity : AppCompatActivity() {
         refreshSelection()
     }
 
+    private fun startInAppUpdate(info: UpdateChecker.Info) {
+        val progress = LinearProgressIndicator(this).apply {
+            isIndeterminate = true
+            val pad = (18 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("正在下载更新")
+            .setView(progress)
+            .setCancelable(false)
+            .create()
+        dialog.show()
+        UpdateChecker.downloadAndInstall(
+            this,
+            info,
+            onProgress = { received, total ->
+                runOnUiThread {
+                    if (total > 0) {
+                        progress.isIndeterminate = false
+                        progress.max = total.toInt().coerceAtLeast(1)
+                        progress.progress = received.toInt().coerceIn(0, progress.max)
+                        dialog.setTitle(
+                            "下载中 ${formatBytes(received)} / ${formatBytes(total)}",
+                        )
+                    } else {
+                        progress.isIndeterminate = true
+                        dialog.setTitle("下载中 ${formatBytes(received)}")
+                    }
+                }
+            },
+            onResult = { ok, message ->
+                runOnUiThread {
+                    dialog.dismiss()
+                    tvUpdateStatus.text = message
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    if (ok) {
+                        tvUpdateStatus.text = "安装器已打开，按系统提示完成更新"
+                    }
+                }
+            },
+        )
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return String.format("%.1f KiB", kb)
+        val mb = kb / 1024.0
+        return String.format("%.1f MiB", mb)
+    }
+
     private fun copyDiagnostics() {
         val logFile = File(filesDir, "drive-sync/runtime.log")
         val log = try {
@@ -124,7 +177,7 @@ class SettingsActivity : AppCompatActivity() {
             tvUpdateStatus.text = result.message
             val info = result.info
             if (result.available && info != null) {
-                UpdateChecker.showDialog(this, info)
+                UpdateChecker.showDialog(this, info) { selected -> startInAppUpdate(selected) }
             } else if (result.message.startsWith("检查更新失败")) {
                 Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
             }

@@ -95,9 +95,23 @@ pub struct Connection {
     device_id: String,
 }
 
+/// rustls 0.23 要求连接前显式安装 crypto provider。桌面构建通常由 reqwest 等
+/// 依赖合并出 provider；移动端（Android/iOS）没有这些依赖，必须在首次 wss 连接前
+/// 安装，否则 rustls 会 panic（Could not automatically determine ... CryptoProvider）。
+#[cfg(feature = "tls")]
+fn ensure_crypto_provider() {
+    use std::sync::Once;
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 impl Connection {
     /// 连接并完成 Hello 认证；返回时 `welcome` 已到。认证阶段限时 15 秒。
     pub async fn connect(relay_url: &str, identity: &Identity, access_token: &str) -> Result<Self> {
+        #[cfg(feature = "tls")]
+        ensure_crypto_provider();
         let url = normalize_relay_url(relay_url);
         if url.is_empty() {
             bail!("中继地址为空（请用 --relay 指定，例如 ws://127.0.0.1:8787/ws）");

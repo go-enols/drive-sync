@@ -1,3 +1,5 @@
+﻿#![allow(dead_code)] // 托盘实现按平台 cfg 使用；Linux 回退任务栏时部分类型仅保留接口
+
 //! 系统托盘（Windows / macOS）。Linux 不编译 tray-icon，回退为普通任务栏窗口。
 //!
 //! 托盘事件回调运行在系统事件线程，不能直接访问 `GuiApp`；因此这里用 [`TrayBridge`]

@@ -289,6 +289,18 @@ pub(crate) fn send_clipboard_text(handle: *mut c_void, text: &str) -> i32 {
     inner.send_clipboard(payload)
 }
 
+/// 请求下载目录条目（手机端“下载”按钮）；返回 `{"ok":true,"peer_id":"..."}`。
+pub(crate) fn fetch_catalog_json(handle: *mut c_void, entry_id: &str) -> String {
+    result_json((|| {
+        let inner = borrow_inner(handle).ok_or_else(|| anyhow!("句柄无效或会话已停止"))?;
+        if !inner.is_active() {
+            bail!("同步会话已停止");
+        }
+        let peer = inner.request_catalog_fetch(entry_id)?;
+        Ok(json!({"ok": true, "peer_id": peer}))
+    })())
+}
+
 /// 暂停/恢复剪切板同步。0 成功，-1 句柄无效。
 pub(crate) fn set_paused(handle: *mut c_void, paused: bool) -> i32 {
     let Some(inner) = borrow_inner(handle) else {

@@ -272,6 +272,23 @@ pub extern "system" fn Java_dev_drivesync_mobile_Native_dmSendClipboardText<'loc
 }
 
 #[no_mangle]
+pub extern "system" fn Java_dev_drivesync_mobile_Native_dmFetchCatalog<'local>(
+    mut env: JNIEnv<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    entry_id: JString<'local>,
+) -> jstring {
+    ensure_vm(&mut env);
+    let Some(entry_id) = jstring_to_string(&mut env, &entry_id) else {
+        return new_jstring(&mut env, "{\"ok\":false,\"error\":\"无效的 entry_id\"}");
+    };
+    new_jstring_json(
+        &mut env,
+        ffi::fetch_catalog_json(handle as *mut c_void, &entry_id),
+    )
+}
+
+#[no_mangle]
 pub extern "system" fn Java_dev_drivesync_mobile_Native_dmSetPaused<'local>(
     mut env: JNIEnv<'local>,
     _this: JObject<'local>,

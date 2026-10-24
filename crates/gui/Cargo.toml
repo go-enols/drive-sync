@@ -24,6 +24,8 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
+# 共享文件夹变更监听（Windows ReadDirectoryChangesW / Linux inotify / macOS FSEvents）。
+notify = "8"
 
 # 系统托盘：仅 Windows / macOS 启用（Linux 发行版依赖 libappindicator，风险较大，回退任务栏）。
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]

@@ -549,6 +549,44 @@ impl Inner {
     // 对外操作
     // -----------------------------------------------------------------
 
+    /// 请求下载目录条目：优先选择 have_list 中持有该条目的在线设备，否则选第一个在线设备。
+    pub(crate) fn request_catalog_fetch(&self, entry_id: &str) -> Result<String> {
+        let state = lock(&self.state);
+        let session = state
+            .session
+            .as_ref()
+            .ok_or_else(|| anyhow!("尚未连接中继"))?;
+        let peer_id = state
+            .have_lists
+            .iter()
+            .find(|(_, ids)| ids.iter().any(|id| id == entry_id))
+            .map(|(peer_id, _)| peer_id.clone())
+            .or_else(|| state.online.iter().next().cloned())
+            .ok_or_else(|| anyhow!("没有在线设备可下载"))?;
+        let handle = session.handle.clone();
+        let rt = session
+            .rt
+            .as_ref()
+            .ok_or_else(|| anyhow!("网络运行时不存在"))?;
+        let entry_id = entry_id.to_string();
+        let log_dir = self.data_dir.clone();
+        let peer_for_task = peer_id.clone();
+        rt.spawn(async move {
+            if let Err(error) = handle
+                .request_fetch(peer_for_task.clone(), entry_id.clone())
+                .await
+            {
+                append_runtime_log(&log_dir, &format!("request_fetch failed: {error:#}"));
+            } else {
+                append_runtime_log(
+                    &log_dir,
+                    &format!("request_fetch: entry={entry_id} peer={peer_for_task}"),
+                );
+            }
+        });
+        Ok(peer_id)
+    }
+
     pub(crate) fn send_clipboard(&self, payload: ClipboardPayload) -> i32 {
         if self.paused.load(Ordering::SeqCst) {
             return -3;

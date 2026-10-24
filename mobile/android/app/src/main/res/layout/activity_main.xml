@@ -372,6 +372,13 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="（未加载）" />
+
+            <LinearLayout
+                android:id="@+id/layoutCatalog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical" />
         </LinearLayout>
 
         <TextView

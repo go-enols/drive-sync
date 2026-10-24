@@ -5,6 +5,7 @@
 //! - 本模块的后台线程持有 tokio Runtime（全局唯一），负责 `Runtime::run()`、配对、一次性网络操作；
 //! - 另一个独立线程轮询本机剪切板（arboard，默认 800ms，哈希去重）。
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -22,6 +23,9 @@ use drive_core::catalog::{CatalogEntry, TargetPlatform};
 use drive_core::clipboard::ClipboardPayload;
 use drive_core::identity::{Identity, PublicIdentity};
 use drive_core::util::{blake3_hex, now_ms};
+use notify::Watcher as _;
+use notify::{RecommendedWatcher, RecursiveMode};
+use serde::{Deserialize, Serialize};
 
 use crate::logbuf;
 use crate::platform;
@@ -152,9 +156,13 @@ pub enum Cmd {
     CatalogAdd {
         path: PathBuf,
     },
-    /// 选择整个文件夹：递归打包为 zip 后登记为目录条目（kind=folder）。
+    /// 选择整个文件夹：逐文件登记为目录条目，并开始监听其变更。
     ShareFolder {
         path: PathBuf,
+    },
+    /// 内部：共享文件夹有变更，重新扫描/同步。
+    RescanShare {
+        id: String,
     },
     CatalogRemove {
         id: String,
@@ -185,6 +193,31 @@ pub enum Cmd {
     OpDone,
 }
 
+/// 一个被共享的文件夹（持久化到 `<data_dir>/shared_folders.json`，App 重启后恢复监听）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SharedFolder {
+    id: String,
+    name: String,
+    path: PathBuf,
+}
+
+fn shared_folders_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("shared_folders.json")
+}
+
+fn load_shared_folders(data_dir: &Path) -> Vec<SharedFolder> {
+    let Ok(raw) = fs::read_to_string(shared_folders_path(data_dir)) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<SharedFolder>>(&raw).unwrap_or_default()
+}
+
+fn save_shared_folders(data_dir: &Path, folders: &[SharedFolder]) -> Result<()> {
+    fs::create_dir_all(data_dir)?;
+    let raw = serde_json::to_string_pretty(folders)?;
+    fs::write(shared_folders_path(data_dir), raw).context("保存 shared_folders.json 失败")
+}
+
 /// GUI 后台句柄。
 pub struct Backend {
     pub cmd_tx: Sender<Cmd>,
@@ -206,7 +239,7 @@ impl Backend {
         let join = std::thread::Builder::new()
             .name("drive-gui-backend".to_string())
             .spawn(move || {
-                let state = BackendState {
+                let mut state = BackendState {
                     tokio: tokio_rt,
                     data_dir,
                     msg_tx,
@@ -219,7 +252,9 @@ impl Backend {
                     last_sync: None,
                     remote_clipboard: None,
                     pending_restart: false,
+                    shared_watchers: HashMap::new(),
                 };
+                restore_shared_folders(&mut state);
                 backend_loop(state, cmd_rx);
             })
             .expect("启动后台线程失败");
@@ -276,6 +311,8 @@ struct BackendState {
     last_sync: Option<(String, String)>,
     remote_clipboard: Option<Sender<ClipboardPayload>>,
     pending_restart: bool,
+    /// 共享文件夹监听器（id → watcher；drop 即停止监听）。
+    shared_watchers: HashMap<String, RecommendedWatcher>,
 }
 
 impl BackendState {
@@ -563,78 +600,79 @@ fn handle_command(state: &mut BackendState, command: Cmd) -> bool {
             let data_dir = state.data_dir.clone();
             let handle = state.sync.as_ref().map(|sync| sync.handle.clone());
             let msg_tx = state.msg_tx.clone();
+            let share_id = blake3_hex(path.to_string_lossy().as_bytes())
+                .chars()
+                .take(8)
+                .collect::<String>();
+            let share_name = path
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| "共享文件夹".to_string());
+            let folder = SharedFolder {
+                id: share_id,
+                name: share_name,
+                path: path.clone(),
+            };
+            let mut shares = load_shared_folders(&data_dir);
+            shares.retain(|share| share.id != folder.id);
+            shares.push(folder.clone());
+            if let Err(error) = save_shared_folders(&data_dir, &shares) {
+                logbuf::log(format!("保存共享文件夹记录失败: {error:#}"));
+            }
+            if let Err(error) = install_share_watcher(state, &folder) {
+                logbuf::log(format!("启动共享文件夹监听失败: {error:#}"));
+            }
             logbuf::log(format!("开始扫描要共享的文件夹: {}", path.display()));
             state.tokio.spawn(async move {
-                let scan_dir = path.clone();
-                let scanned = tokio::task::spawn_blocking(move || scan_folder_files(&scan_dir)).await;
-                let (folder_name, files) = match scanned {
-                    Ok(Ok(value)) => value,
-                    Ok(Err(error)) => {
-                        let _ = msg_tx.send(UiMsg::CatalogAddResult {
-                            ok: false,
-                            message: format!("共享文件夹失败: {error:#}"),
-                        });
-                        return;
+                let (ok, message) = match share_folder_now(data_dir, handle, path).await {
+                    Ok((folder_name, added, failed)) if added > 0 => (
+                        true,
+                        format!(
+                            "已共享文件夹「{folder_name}」：{added} 个文件已登记，对方可在目录中按层级浏览并逐个下载{}",
+                            if failed > 0 {
+                                format!("（{failed} 个失败，详见日志）")
+                            } else {
+                                String::new()
+                            }
+                        ),
+                    ),
+                    Ok((folder_name, _, _)) => (
+                        false,
+                        format!("共享文件夹「{folder_name}」失败：没有成功登记任何文件"),
+                    ),
+                    Err(error) => (false, format!("共享文件夹失败: {error:#}")),
+                };
+                let _ = msg_tx.send(UiMsg::CatalogAddResult { ok, message });
+            });
+        }
+        Cmd::RescanShare { id } => {
+            let data_dir = state.data_dir.clone();
+            let handle = state.sync.as_ref().map(|sync| sync.handle.clone());
+            let folder = load_shared_folders(&data_dir)
+                .into_iter()
+                .find(|folder| folder.id == id);
+            let Some(folder) = folder else {
+                logbuf::log(format!("共享文件夹 {id} 记录不存在，跳过重扫"));
+                return true;
+            };
+            let path = folder.path.clone();
+            logbuf::log(format!("共享文件夹有变更，重新扫描: {}", path.display()));
+            state.tokio.spawn(async move {
+                match share_folder_now(data_dir, handle, path.clone()).await {
+                    Ok((name, added, failed)) => {
+                        logbuf::log(format!(
+                            "共享文件夹「{name}」已刷新：{added} 个文件{}",
+                            if failed > 0 {
+                                format!("，{failed} 个失败")
+                            } else {
+                                String::new()
+                            }
+                        ));
                     }
                     Err(error) => {
-                        let _ = msg_tx.send(UiMsg::CatalogAddResult {
-                            ok: false,
-                            message: format!("共享文件夹任务失败: {error:#}"),
-                        });
-                        return;
-                    }
-                };
-                let share_id = blake3_hex(path.to_string_lossy().as_bytes())
-                    .chars()
-                    .take(8)
-                    .collect::<String>();
-                let share_id_tag = format!("share-id:{share_id}");
-                let share_name_tag = format!("share-name:{folder_name}");
-                let mut added = 0usize;
-                let mut failed = 0usize;
-                for (file_path, relative) in files {
-                    let mut params = CatalogAddParams::new(&file_path);
-                    params.name = relative.clone();
-                    params.kind = "file".to_string();
-                    params.platform = TargetPlatform::Any;
-                    params.tags = vec![
-                        "shared-folder".to_string(),
-                        share_id_tag.clone(),
-                        share_name_tag.clone(),
-                    ];
-                    params.notes = format!("共享文件夹「{folder_name}」中的文件");
-                    let result = match handle.as_ref() {
-                        Some(handle) => handle
-                            .catalog_add(params)
-                            .await
-                            .map_err(|error| format!("{error:#}")),
-                        None => catalog_add_offline(&data_dir, &params)
-                            .map_err(|error| format!("{error:#}")),
-                    };
-                    match result {
-                        Ok(_) => added += 1,
-                        Err(error) => {
-                            failed += 1;
-                            logbuf::log(format!("共享文件失败 {relative}: {error}"));
-                        }
+                        logbuf::log(format!("重新扫描共享文件夹失败: {error:#}"));
                     }
                 }
-                let message = if added == 0 {
-                    format!("共享文件夹「{folder_name}」失败：没有成功登记任何文件")
-                } else {
-                    format!(
-                        "已共享文件夹「{folder_name}」：{added} 个文件已登记，对方可在目录中逐个下载{}",
-                        if failed > 0 {
-                            format!("（{failed} 个失败，详见日志）")
-                        } else {
-                            String::new()
-                        }
-                    )
-                };
-                let _ = msg_tx.send(UiMsg::CatalogAddResult {
-                    ok: added > 0,
-                    message,
-                });
             });
         }
         Cmd::CatalogRemove { id } => {
@@ -1135,9 +1173,10 @@ fn catalog_add_offline(data_dir: &Path, params: &CatalogAddParams) -> Result<Str
 /// 共享文件夹时单个目录最多登记的文件数，避免一次生成过多目录条目。
 const MAX_SHARE_FILES: usize = 5000;
 
-/// 递归扫描文件夹，返回 `(文件夹展示名, [(本机绝对路径, 相对路径)])`。
+/// 扫描文件夹，返回 `(文件夹展示名, [(本机绝对路径, 相对路径)])`。
 ///
-/// 只读源文件夹；跳过符号链接，避免循环；相对路径统一使用 `/`，供对端浏览。
+/// 使用显式栈而非递归，避免超深目录导致栈溢出；只读源文件夹，跳过符号链接；
+/// 相对路径统一使用 `/`，供对端按层级浏览。
 fn scan_folder_files(folder: &Path) -> Result<(String, Vec<(PathBuf, String)>)> {
     if !folder.is_dir() {
         bail!("选择的路径不是文件夹: {}", folder.display());
@@ -1148,41 +1187,142 @@ fn scan_folder_files(folder: &Path) -> Result<(String, Vec<(PathBuf, String)>)> 
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "共享文件夹".to_string());
     let mut files = Vec::new();
-    scan_folder_into(folder, folder, &mut files)?;
-    if files.len() > MAX_SHARE_FILES {
-        bail!(
-            "文件夹内文件过多（{} 个，上限 {} 个），请分文件夹共享",
-            files.len(),
-            MAX_SHARE_FILES
-        );
+    let mut stack = vec![folder.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in
+            fs::read_dir(&dir).with_context(|| format!("读取文件夹失败: {}", dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() {
+                let relative = path
+                    .strip_prefix(folder)
+                    .with_context(|| format!("计算相对路径失败: {}", path.display()))?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                files.push((path, relative));
+                if files.len() > MAX_SHARE_FILES {
+                    bail!(
+                        "文件夹内文件过多（超过 {} 个），请分文件夹共享",
+                        MAX_SHARE_FILES
+                    );
+                }
+            }
+        }
     }
     Ok((name, files))
 }
 
-fn scan_folder_into(base: &Path, dir: &Path, files: &mut Vec<(PathBuf, String)>) -> Result<()> {
-    for entry in fs::read_dir(dir).with_context(|| format!("读取文件夹失败: {}", dir.display()))?
-    {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            continue;
+fn install_share_watcher(state: &mut BackendState, folder: &SharedFolder) -> Result<()> {
+    let (tx, rx) = mpsc::channel::<()>();
+    let mut watcher = notify::recommended_watcher(move |_result| {
+        let _ = tx.send(());
+    })
+    .context("创建文件夹监听器失败")?;
+    watcher
+        .watch(&folder.path, RecursiveMode::Recursive)
+        .with_context(|| format!("监听文件夹失败: {}", folder.path.display()))?;
+    let cmd_tx = state.cmd_tx.clone();
+    let id = folder.id.clone();
+    std::thread::Builder::new()
+        .name("drive-sync-share-watch".into())
+        .spawn(move || {
+            while rx.recv().is_ok() {
+                // 合并短时间内的多次文件事件，避免反复全量重扫。
+                while rx.recv_timeout(Duration::from_millis(900)).is_ok() {}
+                let _ = cmd_tx.send(Cmd::RescanShare { id: id.clone() });
+            }
+        })
+        .context("创建文件夹监听线程失败")?;
+    state.shared_watchers.insert(folder.id.clone(), watcher);
+    Ok(())
+}
+
+fn restore_shared_folders(state: &mut BackendState) {
+    let folders = load_shared_folders(&state.data_dir);
+    for folder in folders {
+        if let Err(error) = install_share_watcher(state, &folder) {
+            logbuf::log(format!(
+                "恢复共享文件夹监听失败 {}: {error:#}",
+                folder.path.display()
+            ));
         }
-        if file_type.is_dir() {
-            scan_folder_into(base, &path, files)?;
-        } else if file_type.is_file() {
-            let relative = path
-                .strip_prefix(base)
-                .with_context(|| format!("计算相对路径失败: {}", path.display()))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            files.push((path, relative));
-            if files.len() > MAX_SHARE_FILES {
-                return Ok(());
+        let _ = state.cmd_tx.send(Cmd::RescanShare {
+            id: folder.id.clone(),
+        });
+    }
+}
+
+/// 全量刷新一个共享文件夹：移除该 share 的旧条目后重新登记当前文件。
+///
+/// 监听事件/启动恢复使用；为控制实现复杂度先做全量替换，后续可按 mtime/hash 增量。
+async fn share_folder_now(
+    data_dir: PathBuf,
+    handle: Option<RuntimeHandle>,
+    path: PathBuf,
+) -> Result<(String, usize, usize)> {
+    let scan_path = path.clone();
+    let (folder_name, files) = tokio::task::spawn_blocking(move || scan_folder_files(&scan_path))
+        .await
+        .context("扫描文件夹任务失败")??;
+    let share_id = blake3_hex(path.to_string_lossy().as_bytes())
+        .chars()
+        .take(8)
+        .collect::<String>();
+    let share_id_tag = format!("share-id:{share_id}");
+    let share_name_tag = format!("share-name:{folder_name}");
+    let store = Store::open(&data_dir)?;
+    let (catalog, _) = store.load_catalog()?;
+    let old_ids: Vec<String> = catalog
+        .visible()
+        .filter(|entry| entry.tags.iter().any(|tag| tag == &share_id_tag))
+        .map(|entry| entry.id.clone())
+        .collect();
+    for id in old_ids {
+        match handle.as_ref() {
+            Some(handle) => {
+                let _ = handle.catalog_remove(id).await;
+            }
+            None => {
+                let _ = catalog_remove_offline(&data_dir, &id);
             }
         }
     }
-    Ok(())
+    let mut added = 0usize;
+    let mut failed = 0usize;
+    for (file_path, relative) in files {
+        let mut params = CatalogAddParams::new(&file_path);
+        params.name = relative.clone();
+        params.kind = "file".to_string();
+        params.platform = TargetPlatform::Any;
+        params.tags = vec![
+            "shared-folder".to_string(),
+            share_id_tag.clone(),
+            share_name_tag.clone(),
+        ];
+        params.notes = format!("共享文件夹「{folder_name}」中的文件");
+        let result = match handle.as_ref() {
+            Some(handle) => handle
+                .catalog_add(params)
+                .await
+                .map_err(|error| format!("{error:#}")),
+            None => catalog_add_offline(&data_dir, &params).map_err(|error| format!("{error:#}")),
+        };
+        match result {
+            Ok(_) => added += 1,
+            Err(error) => {
+                failed += 1;
+                logbuf::log(format!("共享文件失败 {relative}: {error}"));
+            }
+        }
+    }
+    Ok((folder_name, added, failed))
 }
 
 fn catalog_remove_offline(data_dir: &Path, id: &str) -> Result<()> {

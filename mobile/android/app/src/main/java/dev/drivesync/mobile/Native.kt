@@ -28,6 +28,7 @@ object Native {
     external fun dmStart(relayUrl: String, token: String, callback: Callback): Long
     external fun dmStop(handle: Long)
     external fun dmSendClipboardText(handle: Long, text: String): Int
+    external fun dmFetchCatalog(handle: Long, entryId: String): String
     external fun dmSetPaused(handle: Long, paused: Boolean): Int
 
     external fun dmPairStart(handle: Long): String

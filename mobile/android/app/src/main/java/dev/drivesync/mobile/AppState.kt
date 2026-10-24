@@ -2,11 +2,15 @@ package dev.drivesync.mobile
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.MediaStore
 import org.json.JSONObject
+import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -56,6 +60,13 @@ object AppState {
                 JSONObject(json)
             } catch (_: Exception) {
                 return
+            }
+            if (event.optString("type") == "transfer_received") {
+                val path = event.optString("path")
+                val context = appContext
+                if (path.isNotEmpty() && context != null) {
+                    mainHandler.post { saveDownloadedFile(context, path) }
+                }
             }
             mainHandler.post {
                 for (listener in listeners) {
@@ -121,6 +132,51 @@ object AppState {
         lastSentHash = sha256(text)
         lastSentAtMs = SystemClock.elapsedRealtime()
         lastClipboardPreview = text
+    }
+
+    /** 把设备间传输收到的文件复制到系统 Downloads/drive-sync，并通知 UI。 */
+    private fun saveDownloadedFile(context: Context, path: String) {
+        Thread {
+            val source = File(path)
+            val name = source.name
+            var ok = false
+            try {
+                if (source.isFile) {
+                    val resolver = context.contentResolver
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                        put(
+                            MediaStore.MediaColumns.RELATIVE_PATH,
+                            Environment.DIRECTORY_DOWNLOADS + "/drive-sync",
+                        )
+                    }
+                    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { output ->
+                            source.inputStream().use { input -> input.copyTo(output) }
+                        }
+                        ok = true
+                    }
+                }
+            } catch (_: Throwable) {
+                ok = false
+            }
+            val event = JSONObject()
+                .put("type", "file_saved")
+                .put("name", name)
+                .put("ok", ok)
+            mainHandler.post {
+                for (listener in listeners) {
+                    try {
+                        listener(event)
+                    } catch (_: Exception) {
+                        // 忽略
+                    }
+                }
+                NotificationHelper.notifyFileSaved(context, name, ok)
+            }
+        }.start()
     }
 
     /** 接收远端剪切板：写系统剪贴板 + 通知 + 更新预览（主线程调用）。 */

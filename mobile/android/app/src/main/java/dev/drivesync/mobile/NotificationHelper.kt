@@ -20,6 +20,7 @@ object NotificationHelper {
     const val CHANNEL_CLIPBOARD = "drive_sync_clipboard"
     const val SERVICE_NOTIFICATION_ID = 1001
     const val CLIPBOARD_NOTIFICATION_ID = 1002
+    const val FILE_NOTIFICATION_ID = 1003
 
     private const val REQUEST_OPEN_APP = 1
     private const val REQUEST_QUICK_SYNC = 2
@@ -104,6 +105,28 @@ object NotificationHelper {
             manager.notify(CLIPBOARD_NOTIFICATION_ID, notification)
         } catch (_: SecurityException) {
             // 未授予 POST_NOTIFICATIONS 时静默失败
+        }
+    }
+
+    /** 设备间下载/接收文件完成。 */
+    fun notifyFileSaved(context: Context, name: String, ok: Boolean) {
+        ensureChannels(context)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val notification = NotificationCompat.Builder(context, CHANNEL_CLIPBOARD)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(accent(context))
+            .setContentTitle(if (ok) "文件已下载" else "文件保存失败")
+            .setContentText(
+                if (ok) "$name 已保存到 Downloads/drive-sync" else "$name 无法写入 Downloads",
+            )
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(openAppIntent(context))
+            .build()
+        try {
+            manager.notify(FILE_NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {
+            // 忽略
         }
     }
 

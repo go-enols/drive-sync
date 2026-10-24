@@ -4,6 +4,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -39,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvPairStatus: TextView
     private lateinit var tvClipboard: TextView
     private lateinit var tvCatalog: TextView
+    private lateinit var layoutCatalog: LinearLayout
     private lateinit var tvPermissionHint: TextView
     private lateinit var btnSaveConfig: MaterialButton
     private lateinit var btnConnect: MaterialButton
@@ -112,6 +114,7 @@ class MainActivity : AppCompatActivity() {
         tvPairStatus = findViewById(R.id.tvPairStatus)
         tvClipboard = findViewById(R.id.tvClipboard)
         tvCatalog = findViewById(R.id.tvCatalog)
+        layoutCatalog = findViewById(R.id.layoutCatalog)
         tvPermissionHint = findViewById(R.id.tvPermissionHint)
         btnSaveConfig = findViewById(R.id.btnSaveConfig)
         btnConnect = findViewById(R.id.btnConnect)
@@ -465,34 +468,87 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderCatalog(json: JSONObject) {
+        layoutCatalog.removeAllViews()
         if (!json.optBoolean("ok")) {
             tvCatalog.text = "目录加载失败：${json.optString("error")}"
             return
         }
         val entries = json.optJSONArray("entries")
         if (entries == null || entries.length() == 0) {
-            tvCatalog.text = "目录为空（在桌面端添加软件后会同步到这里）"
+            tvCatalog.text = "目录为空（在桌面端添加软件/共享文件夹后会同步到这里）"
             return
         }
-        val builder = StringBuilder()
-        builder.append("共 ").append(json.optInt("count")).append(" 项\n")
-        for (index in 0 until entries.length()) {
+        tvCatalog.text = "共 ${json.optInt("count")} 项；非本机文件可点右侧「下载」"
+        val density = resources.displayMetrics.density
+        val rowPadding = (6 * density).toInt()
+        val maxRows = 300
+        val shown = minOf(entries.length(), maxRows)
+        for (index in 0 until shown) {
             val entry = entries.optJSONObject(index) ?: continue
-            builder.append("• ").append(entry.optString("name"))
-                .append(" v").append(entry.optString("version"))
-                .append(" [").append(entry.optString("platform"))
-                .append("/").append(entry.optString("kind")).append("] ")
-                .append(formatSize(entry.optLong("size")))
-            val holders = entry.optJSONArray("holders")
-            if (holders != null && holders.length() > 0) {
-                builder.append(" · 持有设备 ").append(holders.length())
+            val local = entry.optBoolean("local")
+            val holders = entry.optJSONArray("holders")?.length() ?: 0
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, rowPadding, 0, rowPadding)
             }
-            if (entry.optBoolean("local")) {
-                builder.append(" · 本机已有")
+            val label = TextView(this).apply {
+                text = buildString {
+                    append(entry.optString("name"))
+                    append("  ")
+                    append(formatSize(entry.optLong("size")))
+                    if (local) {
+                        append(" · 本机")
+                    } else if (holders > 0) {
+                        append(" · $holders 台持有")
+                    } else {
+                        append(" · 等待持有设备上线")
+                    }
+                }
+                textSize = 12.5f
+                setTextColor(getColor(R.color.text_primary))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
-            builder.append("\n")
+            row.addView(label)
+            if (!local) {
+                val entryId = entry.optString("id")
+                val entryName = entry.optString("name")
+                val button = MaterialButton(this).apply {
+                    text = "下载"
+                    isAllCaps = false
+                    minimumWidth = 0
+                    minWidth = 0
+                    setOnClickListener { downloadEntry(entryId, entryName) }
+                }
+                row.addView(button)
+            }
+            layoutCatalog.addView(row)
         }
-        tvCatalog.text = builder.toString().trimEnd()
+        if (entries.length() > maxRows) {
+            val more = TextView(this).apply {
+                text = "…仅显示前 $maxRows 项（请在桌面端缩小共享范围或分文件夹）"
+                textSize = 12f
+                setTextColor(getColor(R.color.text_secondary))
+            }
+            layoutCatalog.addView(more)
+        }
+    }
+
+    private fun downloadEntry(entryId: String, name: String) {
+        val handle = AppState.handle
+        if (handle == 0L) {
+            toast("请先连接中继")
+            return
+        }
+        lifecycleScope.launch {
+            val json = withContext(Dispatchers.IO) { Native.dmFetchCatalog(handle, entryId) }
+            val result = SyncLauncher.parseJson(json)
+            if (result.optBoolean("ok")) {
+                toast("开始下载：$name")
+                tvSyncStatus.text = "正在下载：$name（完成后保存到 Downloads/drive-sync）"
+            } else {
+                toast("下载失败：${result.optString("error")}")
+            }
+        }
     }
 
     private fun renderStatus(json: JSONObject) {
@@ -534,6 +590,20 @@ class MainActivity : AppCompatActivity() {
             "clipboard_applied" -> tvSyncStatus.text =
                 "收到远端剪切板 ${event.optLong("size")} 字节（来自 ${event.optString("peer_id")}）"
             "remote_clipboard_applied" -> tvClipboard.text = event.optString("preview")
+            "transfer_received" -> {
+                tvSyncStatus.text =
+                    "文件已收到（${formatSize(event.optLong("size"))}），正在保存到 Downloads/drive-sync…"
+            }
+            "transfer_failed" -> {
+                tvSyncStatus.text = "文件下载失败：${event.optString("message")}"
+            }
+            "file_saved" -> {
+                tvSyncStatus.text = if (event.optBoolean("ok")) {
+                    "已保存：Downloads/drive-sync/${event.optString("name")}"
+                } else {
+                    "文件保存失败：${event.optString("name")}"
+                }
+            }
             "pair_code" -> tvPairCode.text = formatPairCode(event.optString("code"))
             "pair_succeeded" -> {
                 tvPairStatus.text =

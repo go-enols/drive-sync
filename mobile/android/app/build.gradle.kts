@@ -12,8 +12,8 @@ android {
         applicationId = "dev.drivesync.mobile"
         minSdk = 29
         targetSdk = 36
-        // 9：修复 rustls 0.23 CryptoProvider 未安装导致的 Android wss 连接 panic。
-        versionCode = 9
+        // 10：手机端软件目录支持逐个文件下载（共享文件夹内容保存到 Downloads）。
+        versionCode = 10
         versionName = "0.3.2"
 
         // Rust cdylib 由 cargo-ndk 产出到 src/main/jniLibs/<abi>/

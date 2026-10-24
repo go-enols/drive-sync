@@ -2087,45 +2087,13 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
                         .1
                         .push(entry);
                 }
-                for (_, (name, mut files)) in groups {
-                    files.sort_by(|left, right| left.name.cmp(&right.name));
-                    egui::CollapsingHeader::new(format!("{name}（{} 个文件）", files.len()))
+                for (_, (name, files)) in groups {
+                    let count = files.len();
+                    let tree = build_share_tree(files);
+                    egui::CollapsingHeader::new(format!("{name}（{count} 个文件）"))
                         .default_open(false)
                         .show(ui, |ui| {
-                            for entry in files {
-                                let local = app.local_index.contains_key(&entry.id);
-                                let holders: Vec<String> = app
-                                    .peer_have
-                                    .iter()
-                                    .filter(|(_, entries)| entries.iter().any(|id| id == &entry.id))
-                                    .map(|(peer_id, _)| peer_name(app, peer_id))
-                                    .collect();
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(&entry.name)
-                                            .monospace()
-                                            .size(12.5)
-                                            .color(theme::text()),
-                                    );
-                                    ui.label(theme::muted(platform::human_bytes(entry.size)));
-                                    if local {
-                                        ui.label(theme::muted("本机"));
-                                    } else if holders.is_empty() {
-                                        ui.label(theme::muted("无在线持有设备"));
-                                    } else {
-                                        ui.label(theme::muted(format!(
-                                            "来自 {}",
-                                            holders.join("、")
-                                        )));
-                                        if theme::secondary_button(ui, "下载") {
-                                            let _ = app.cmd_tx.send(Cmd::FetchCatalog {
-                                                entry_id: entry.id.clone(),
-                                                out_dir: app.data_dir.join("incoming"),
-                                            });
-                                        }
-                                    }
-                                });
-                            }
+                            render_share_tree(ui, app, &tree, 0);
                         });
                 }
             },
@@ -2898,6 +2866,77 @@ fn push_limited(buffer: &mut VecDeque<String>, line: String, limit: usize) {
     buffer.push_back(line);
     while buffer.len() > limit {
         buffer.pop_front();
+    }
+}
+
+#[derive(Default)]
+struct ShareTreeNode {
+    dirs: BTreeMap<String, ShareTreeNode>,
+    files: Vec<(String, CatalogEntry)>,
+}
+
+fn build_share_tree(entries: Vec<CatalogEntry>) -> ShareTreeNode {
+    let mut root = ShareTreeNode::default();
+    for entry in entries {
+        let mut parts: Vec<&str> = entry
+            .name
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect();
+        let Some(file) = parts.pop() else {
+            continue;
+        };
+        let mut node = &mut root;
+        for dir in parts {
+            node = node.dirs.entry(dir.to_string()).or_default();
+        }
+        node.files.push((file.to_string(), entry));
+    }
+    root
+}
+
+/// 按目录树渲染共享文件夹；子目录默认折叠，展开时才构建下一层（懒加载 UI）。
+fn render_share_tree(ui: &mut egui::Ui, app: &mut GuiApp, node: &ShareTreeNode, depth: usize) {
+    for (dir, child) in &node.dirs {
+        egui::CollapsingHeader::new(format!("{dir}/"))
+            .default_open(false)
+            .show(ui, |ui| render_share_tree(ui, app, child, depth + 1));
+    }
+    for (file, entry) in &node.files {
+        let local = app.local_index.contains_key(&entry.id);
+        let holders: Vec<String> = app
+            .peer_have
+            .iter()
+            .filter(|(_, entries)| entries.iter().any(|id| id == &entry.id))
+            .map(|(peer_id, _)| peer_name(app, peer_id))
+            .collect();
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(file)
+                    .monospace()
+                    .size(12.5)
+                    .color(theme::text()),
+            )
+            .on_hover_text(&entry.name);
+            ui.label(theme::muted(platform::human_bytes(entry.size)));
+            if local {
+                ui.label(theme::muted("本机"));
+            } else {
+                if holders.is_empty() {
+                    ui.label(theme::muted("等待持有设备上线"));
+                } else {
+                    ui.label(theme::muted(format!("来自 {}", holders.join("、"))));
+                }
+                // 即使当前没有在线持有设备也显示下载入口，后台会等待/报错，
+                // 避免用户只“看得见”却没有任何操作。
+                if theme::secondary_button(ui, "下载") {
+                    let _ = app.cmd_tx.send(Cmd::FetchCatalog {
+                        entry_id: entry.id.clone(),
+                        out_dir: app.data_dir.join("incoming"),
+                    });
+                }
+            }
+        });
     }
 }
 

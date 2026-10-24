@@ -1021,6 +1021,10 @@ impl GuiApp {
 // ---------------------------------------------------------------------------
 
 impl eframe::App for GuiApp {
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos")),
+        allow(unused_variables)
+    )]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // 记录原生窗口句柄，供托盘线程隐藏/恢复窗口（Windows）。
         #[cfg(target_os = "windows")]

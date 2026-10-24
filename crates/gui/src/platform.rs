@@ -125,7 +125,57 @@ pub fn current_exe() -> Result<PathBuf> {
 #[cfg(target_os = "windows")]
 const AUTOSTART_VALUE: &str = "DriveSyncGui";
 #[cfg(target_os = "windows")]
+const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(target_os = "windows")]
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+
+/// 直接在进程内读注册表，避免每帧/每次进设置页 spawn `reg.exe`（Windows 下进程
+/// 创建在杀软扫描或系统繁忙时可能阻塞数秒，UI 线程会被卡死）。
+#[cfg(target_os = "windows")]
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn reg_read_dword(subkey: &str, value: &str) -> Option<u32> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let subkey = wide(subkey);
+    let value = wide(value);
+    let mut data: u32 = 0;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut data as *mut u32).cast(),
+            &mut size,
+        )
+    };
+    (status == 0).then_some(data)
+}
+
+#[cfg(target_os = "windows")]
+fn reg_value_exists(subkey: &str, value: &str) -> bool {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    let subkey = wide(subkey);
+    let value = wide(value);
+    let mut size: u32 = 0;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut size,
+        )
+    };
+    status == 0
+}
 
 #[cfg(target_os = "linux")]
 fn linux_autostart_path() -> PathBuf {
@@ -160,13 +210,7 @@ fn macos_launch_agent_path() -> PathBuf {
 pub fn autostart_enabled() -> bool {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("reg")
-            .args(["query", RUN_KEY, "/v", AUTOSTART_VALUE])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        reg_value_exists(RUN_SUBKEY, AUTOSTART_VALUE)
     }
     #[cfg(target_os = "linux")]
     {
@@ -297,6 +341,33 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
     }
 }
 
+/// 当前平台是否提供原生文件/文件夹选择框。
+pub const fn browse_supported() -> bool {
+    cfg!(any(target_os = "windows", target_os = "macos"))
+}
+
+/// 原生文件选择框；取消或平台不支持返回 `None`。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub fn pick_file(title: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title(title).pick_file()
+}
+
+/// 原生文件夹选择框；取消或平台不支持返回 `None`。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub fn pick_folder(title: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title(title).pick_folder()
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub fn pick_file(_title: &str) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub fn pick_folder(_title: &str) -> Option<PathBuf> {
+    None
+}
+
 /// 用系统文件管理器打开目录/文件。
 pub fn open_path(path: &Path) -> Result<()> {
     if !path.exists() {
@@ -367,25 +438,11 @@ pub fn human_bytes(bytes: u64) -> String {
 pub fn system_prefers_light() -> Option<bool> {
     #[cfg(target_os = "windows")]
     {
-        let output = std::process::Command::new("reg")
-            .args([
-                "query",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-                "/v",
-                "AppsUseLightTheme",
-            ])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
-        for token in text.split_whitespace() {
-            if let Some(value) = token.strip_prefix("0x") {
-                return Some(value != "0");
-            }
-        }
-        None
+        reg_read_dword(
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            "AppsUseLightTheme",
+        )
+        .map(|value| value != 0)
     }
     #[cfg(target_os = "linux")]
     {

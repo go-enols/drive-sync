@@ -3,6 +3,7 @@ package dev.drivesync.mobile
 import android.content.Intent
 import android.os.Bundle
 import android.widget.RadioGroup
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
@@ -18,13 +19,35 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 class SettingsActivity : AppCompatActivity() {
     private lateinit var rgTheme: RadioGroup
     private lateinit var swAutoStartSync: SwitchMaterial
+    private lateinit var swAutoUpdate: SwitchMaterial
+    private lateinit var btnCheckUpdate: MaterialButton
+    private lateinit var tvUpdateCurrent: TextView
+    private lateinit var tvUpdateStatus: TextView
     private var refreshing = false
+    private var checkingUpdate = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
         rgTheme = findViewById(R.id.rgTheme)
         swAutoStartSync = findViewById(R.id.swAutoStartSync)
+        swAutoUpdate = findViewById(R.id.swAutoUpdate)
+        btnCheckUpdate = findViewById(R.id.btnCheckUpdate)
+        tvUpdateCurrent = findViewById(R.id.tvUpdateCurrent)
+        tvUpdateStatus = findViewById(R.id.tvUpdateStatus)
+        tvUpdateCurrent.text =
+            "当前版本 v${UpdateChecker.currentVersion(this)} (build ${UpdateChecker.currentBuild(this)})"
+        swAutoUpdate.isChecked = UpdateChecker.isAutoCheckEnabled(this)
+        swAutoUpdate.setOnCheckedChangeListener { _, checked ->
+            if (refreshing) return@setOnCheckedChangeListener
+            UpdateChecker.setAutoCheckEnabled(this, checked)
+            Toast.makeText(
+                this,
+                if (checked) "已开启：每天最多自动检查一次更新" else "已关闭自动检查更新",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        btnCheckUpdate.setOnClickListener { checkForUpdate() }
         findViewById<MaterialButton>(R.id.btnBack).setOnClickListener { finish() }
         findViewById<MaterialButton>(R.id.btnOpenPermissions).setOnClickListener {
             startActivity(Intent(this, PermissionsActivity::class.java))
@@ -61,6 +84,26 @@ class SettingsActivity : AppCompatActivity() {
         refreshSelection()
     }
 
+    private fun checkForUpdate() {
+        if (checkingUpdate) return
+        checkingUpdate = true
+        btnCheckUpdate.isEnabled = false
+        tvUpdateStatus.text = "正在检查更新…"
+        UpdateChecker.check(this) { result ->
+            checkingUpdate = false
+            btnCheckUpdate.isEnabled = true
+            tvUpdateCurrent.text =
+            "当前版本 v${UpdateChecker.currentVersion(this)} (build ${UpdateChecker.currentBuild(this)})"
+            tvUpdateStatus.text = result.message
+            val info = result.info
+            if (result.available && info != null) {
+                UpdateChecker.showDialog(this, info)
+            } else if (result.message.startsWith("检查更新失败")) {
+                Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun refreshSelection() {
         refreshing = true
         try {
@@ -72,6 +115,9 @@ class SettingsActivity : AppCompatActivity() {
                 },
             )
             swAutoStartSync.isChecked = SyncLauncher.isAutoStartEnabled(this)
+            swAutoUpdate.isChecked = UpdateChecker.isAutoCheckEnabled(this)
+            tvUpdateCurrent.text =
+            "当前版本 v${UpdateChecker.currentVersion(this)} (build ${UpdateChecker.currentBuild(this)})"
         } finally {
             refreshing = false
         }

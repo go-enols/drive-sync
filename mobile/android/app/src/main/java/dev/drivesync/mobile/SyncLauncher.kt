@@ -32,10 +32,43 @@ object SyncLauncher {
             .apply()
     }
 
+    /**
+     * 公网中继自动升级到 wss：明文 ws:// 打到 Cloudflare/nginx 的 443 域名会被 301 拒绝。
+     * 局域网/本机地址保留 ws://（没有证书也方便自建）。
+     */
+    fun normalizeRelayUrl(raw: String): String {
+        val trimmed = raw.trim()
+        if (!trimmed.startsWith("ws://", ignoreCase = true)) return trimmed
+        val rest = trimmed.substring(5)
+        val authority = rest.substringBefore('/')
+        val host = if (authority.startsWith("[")) {
+            authority.substringAfter('[').substringBefore(']')
+        } else {
+            authority.substringBefore(':')
+        }.lowercase()
+        return if (isPrivateHost(host)) trimmed else "wss://$rest"
+    }
+
+    private fun isPrivateHost(host: String): Boolean {
+        if (host == "localhost" || host == "::1" || host.endsWith(".local")) return true
+        if (host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.") ||
+            host.startsWith("169.254.")
+        ) {
+            return true
+        }
+        if (host.startsWith("172.")) {
+            val second = host.split('.').getOrNull(1)?.toIntOrNull()
+            if (second != null && second in 16..31) return true
+        }
+        // IPv6 ULA fc00::/7 与链路本地 fe80::/10
+        if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return true
+        return false
+    }
+
     /** relay/token 是否已保存且格式可用（用于判断“已完成首次配置，可自动连接”）。 */
     fun hasCompleteConfig(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val relay = prefs.getString(KEY_RELAY, "").orEmpty().trim()
+        val relay = normalizeRelayUrl(prefs.getString(KEY_RELAY, "").orEmpty())
         val token = prefs.getString(KEY_TOKEN, "").orEmpty().trim()
         return token.isNotEmpty() &&
             (relay.startsWith("ws://") || relay.startsWith("wss://"))
@@ -48,7 +81,7 @@ object SyncLauncher {
             return "ok"
         }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val relay = prefs.getString(KEY_RELAY, "").orEmpty().trim()
+        val relay = normalizeRelayUrl(prefs.getString(KEY_RELAY, "").orEmpty())
         val token = prefs.getString(KEY_TOKEN, "").orEmpty().trim()
         val deviceName = prefs.getString(KEY_DEVICE_NAME, "Android 手机").orEmpty().trim()
         if (relay.isEmpty() || token.isEmpty()) {

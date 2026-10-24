@@ -71,6 +71,22 @@ fn tls_hint(url: &str) -> &'static str {
     }
 }
 
+/// 反向代理常见错误提示：明文 `ws://` 打到只开 443 的域名会被 301/308 重定向。
+fn redirect_hint(url: &str, error: &str) -> &'static str {
+    let redirected = error.contains("301")
+        || error.contains("302")
+        || error.contains("307")
+        || error.contains("308");
+    if !redirected {
+        return "";
+    }
+    if url.starts_with("ws://") {
+        "（服务器要求 HTTPS：请把中继地址改成 wss:// 再试）"
+    } else {
+        "（反代重定向异常：请检查域名、端口与证书）"
+    }
+}
+
 /// 一条已认证的中继连接。
 pub struct Connection {
     ws: WsStream,
@@ -91,7 +107,14 @@ impl Connection {
         let connect = async {
             connect_async_with_config(url.as_str(), None, true)
                 .await
-                .map_err(|e| anyhow!("连接中继失败（{url}）: {e}{}", tls_hint(&url)))
+                .map_err(|e| {
+                    let text = e.to_string();
+                    anyhow!(
+                        "连接中继失败（{url}）: {e}{}{}",
+                        tls_hint(&url),
+                        redirect_hint(&url, &text)
+                    )
+                })
         };
         let (mut ws, _response) = tokio::time::timeout(Duration::from_secs(15), connect)
             .await

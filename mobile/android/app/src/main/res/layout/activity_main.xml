@@ -31,16 +31,19 @@
 
                 <TextView
                     style="@style/Text.DriveSync.Section"
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:text="连接状态" />
 
                 <TextView
                     android:id="@+id/tvConnStatus"
                     style="@style/Text.DriveSync.Mono"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="end"
+                    android:maxLines="2"
                     android:text="未连接" />
             </LinearLayout>
 
@@ -112,7 +115,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:hint="中继地址（ws://主机:8787/ws）">
+                android:hint="中继地址（ws://局域网:8787/ws 或 wss://公网域名/ws）">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etRelay"

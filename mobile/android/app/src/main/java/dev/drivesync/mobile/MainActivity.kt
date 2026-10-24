@@ -81,6 +81,12 @@ class MainActivity : AppCompatActivity() {
             // 打开即同步：已过首次引导且配置完整时自动连接（首次启动不触发，仍走引导）。
             maybeAutoStart()
         }
+        // 自动检查更新：每天最多一次；发现新版本时弹窗提示（Android 侧载无法静默安装）。
+        UpdateChecker.maybeAutoCheck(this) { info ->
+            if (!isFinishing && !isDestroyed) {
+                UpdateChecker.showDialog(this, info)
+            }
+        }
     }
 
     override fun onResume() {
@@ -161,7 +167,8 @@ class MainActivity : AppCompatActivity() {
 
     /** 读取并校验输入；返回 null 表示校验失败（已 toast）。 */
     private fun readConfig(): Triple<String, String, String>? {
-        val relay = etRelay.text?.toString()?.trim().orEmpty()
+        val rawRelay = etRelay.text?.toString()?.trim().orEmpty()
+        val relay = SyncLauncher.normalizeRelayUrl(rawRelay)
         val token = etToken.text?.toString()?.trim().orEmpty()
         val deviceName = etDeviceName.text?.toString()?.trim().orEmpty()
         if (relay.isEmpty() || token.isEmpty() || deviceName.isEmpty()) {
@@ -171,6 +178,10 @@ class MainActivity : AppCompatActivity() {
         if (!relay.startsWith("ws://") && !relay.startsWith("wss://")) {
             toast("中继地址需以 ws:// 或 wss:// 开头")
             return null
+        }
+        if (relay != rawRelay) {
+            etRelay.setText(relay)
+            toast("公网中继已自动改用 wss://（明文 ws 会被服务器 301 拒绝）")
         }
         savePrefs(relay, token, deviceName)
         return Triple(relay, token, deviceName)
@@ -493,15 +504,14 @@ class MainActivity : AppCompatActivity() {
     private fun onNativeEvent(event: JSONObject) {
         if (isFinishing || isDestroyed) return
         when (event.optString("type")) {
-            "started" -> tvConnStatus.text =
-                "已启动 · 设备 ${event.optString("name")} (${event.optString("device_id")})"
+            "started" -> tvConnStatus.text = "正在连接中继…"
             "connected" -> {
-                tvConnStatus.text = "已连接中继（设备 ${event.optString("device_id")}）"
+                tvConnStatus.text = "已连接中继"
                 refreshPeersOnly()
             }
             "presence" -> {
                 val online = event.optJSONArray("online")?.length() ?: 0
-                tvConnStatus.text = "已连接中继 · 在线设备 $online 台"
+                tvConnStatus.text = "已连接 · 在线 $online 台"
             }
             "peer_online", "peer_offline", "session_established", "session_closed",
             "peers_reloaded", "peer_revoked", "peer_unpaired" -> {
@@ -524,6 +534,7 @@ class MainActivity : AppCompatActivity() {
             "relay_error", "error" -> {
                 val message = event.optString("message")
                 AppState.lastError = message
+                tvConnStatus.text = "连接失败（自动重试中）"
                 tvSyncStatus.text = "错误：$message"
             }
             "paused" -> tvSyncStatus.text =
@@ -570,10 +581,11 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------------
 
     private fun updateConnectedUi() {
-        val connected = AppState.handle != 0L
-        btnConnect.isEnabled = !connected
-        btnDisconnect.isEnabled = connected
-        tvConnStatus.text = if (connected) "已连接（后台接收自动同步中）" else "未连接"
+        val started = AppState.handle != 0L
+        btnConnect.isEnabled = !started
+        btnDisconnect.isEnabled = started
+        // handle 只表示原生运行时已启动，真正连上中继由 connected/presence 事件更新。
+        tvConnStatus.text = if (started) "正在连接中继…" else "未连接"
     }
 
     private fun updateDisconnectedUi() {

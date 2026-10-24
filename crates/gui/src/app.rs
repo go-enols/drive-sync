@@ -9,7 +9,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use drive_client::{LocalIndexEntry, RuntimeEvent, Store, VaultKey};
-use drive_core::catalog::Catalog;
+use drive_core::catalog::{Catalog, CatalogEntry};
 use drive_core::clipboard::{ClipboardKind, ClipboardPayload};
 use drive_core::pairing::PairRecord;
 
@@ -1441,14 +1441,21 @@ fn pair_panel_ui(
     relay: &str,
     token: &str,
 ) {
-    ui.horizontal(|ui| {
-        if theme::primary_button(ui, "发起配对") && !panel.started {
-            start_pair_from_panel(panel, cmd_tx, relay, token, PairMode::Initiate);
-        }
-        if theme::secondary_button(ui, "加入配对") && !panel.started {
-            panel.mode = Some(PairMode::Join);
-        }
-    });
+    // 入口已经带了模式：发起配对直接开始，加入配对直接显示配对码输入，
+    // 不再在弹窗里让用户二次选择「发起/加入」。
+    if !panel.started && panel.mode == Some(PairMode::Initiate) {
+        start_pair_from_panel(panel, cmd_tx, relay, token, PairMode::Initiate);
+    }
+    if !panel.started && panel.mode.is_none() {
+        ui.horizontal(|ui| {
+            if theme::primary_button(ui, "发起配对") {
+                start_pair_from_panel(panel, cmd_tx, relay, token, PairMode::Initiate);
+            }
+            if theme::secondary_button(ui, "加入配对") {
+                panel.mode = Some(PairMode::Join);
+            }
+        });
+    }
     if panel.mode == Some(PairMode::Join) && !panel.started {
         ui.add_space(8.0);
         ui.label(theme::muted("配对码（8 位数字）或扫码串（二选一）："));
@@ -2009,15 +2016,20 @@ fn page_clipboard(app: &mut GuiApp, ui: &mut egui::Ui) {
 
 fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
     theme::page_header(ui, "软件目录", Page::Catalog.subtitle());
-    theme::card_titled(ui, "添加本地文件", |ui| {
+    theme::card_titled(ui, "共享文件 / 文件夹", |ui| {
         ui.horizontal(|ui| {
             ui.label(theme::muted("文件路径"));
             theme::input(
                 ui,
                 &mut app.catalog_path_input,
                 "例如 D:\\Downloads\\tool-1.2.3.zip",
-                430.0,
+                360.0,
             );
+            if platform::browse_supported() && theme::secondary_button(ui, "浏览…") {
+                if let Some(path) = platform::pick_file("选择要添加的软件文件") {
+                    app.catalog_path_input = path.display().to_string();
+                }
+            }
             if theme::primary_button(ui, "添加文件") {
                 let path = PathBuf::from(app.catalog_path_input.trim());
                 if path.as_os_str().is_empty() {
@@ -2034,8 +2046,91 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
                 }
             }
         });
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if theme::primary_button(ui, "共享文件夹…") {
+                if let Some(dir) = platform::pick_folder("选择要共享的文件夹") {
+                    app.toast(true, format!("正在打包文件夹：{}", dir.display()));
+                    let _ = app.cmd_tx.send(Cmd::ShareFolder { path: dir });
+                } else if !platform::browse_supported() {
+                    app.toast(false, "当前平台暂未启用文件夹选择");
+                }
+            }
+            ui.label(theme::muted(
+                "整个文件夹会递归打包为 zip 登记到目录；已配对设备获取后解压，源文件不会被移动。",
+            ));
+        });
     });
     app.refresh_store();
+    let shared: Vec<CatalogEntry> = app
+        .catalog
+        .visible()
+        .filter(|entry| is_shared_entry(entry))
+        .cloned()
+        .collect();
+    if !shared.is_empty() {
+        theme::card_titled(
+            ui,
+            "共享文件夹（对端可浏览并逐个下载）",
+            |ui| {
+                let mut groups: BTreeMap<String, (String, Vec<CatalogEntry>)> = BTreeMap::new();
+                for entry in shared {
+                    let id = tag_value(&entry, "share-id:")
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let name = tag_value(&entry, "share-name:")
+                        .unwrap_or("共享文件夹")
+                        .to_string();
+                    groups
+                        .entry(id)
+                        .or_insert_with(|| (name, Vec::new()))
+                        .1
+                        .push(entry);
+                }
+                for (_, (name, mut files)) in groups {
+                    files.sort_by(|left, right| left.name.cmp(&right.name));
+                    egui::CollapsingHeader::new(format!("{name}（{} 个文件）", files.len()))
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            for entry in files {
+                                let local = app.local_index.contains_key(&entry.id);
+                                let holders: Vec<String> = app
+                                    .peer_have
+                                    .iter()
+                                    .filter(|(_, entries)| entries.iter().any(|id| id == &entry.id))
+                                    .map(|(peer_id, _)| peer_name(app, peer_id))
+                                    .collect();
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&entry.name)
+                                            .monospace()
+                                            .size(12.5)
+                                            .color(theme::text()),
+                                    );
+                                    ui.label(theme::muted(platform::human_bytes(entry.size)));
+                                    if local {
+                                        ui.label(theme::muted("本机"));
+                                    } else if holders.is_empty() {
+                                        ui.label(theme::muted("无在线持有设备"));
+                                    } else {
+                                        ui.label(theme::muted(format!(
+                                            "来自 {}",
+                                            holders.join("、")
+                                        )));
+                                        if theme::secondary_button(ui, "下载") {
+                                            let _ = app.cmd_tx.send(Cmd::FetchCatalog {
+                                                entry_id: entry.id.clone(),
+                                                out_dir: app.data_dir.join("incoming"),
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                }
+            },
+        );
+    }
     theme::card_titled(ui, "目录条目", |ui| {
         if app.catalog.visible_count() == 0 {
             theme::empty_state(ui, "目录为空，添加文件后自动登记元数据并同步给已配对设备。");
@@ -2054,7 +2149,13 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
                     );
                 }
                 ui.end_row();
-                for entry in app.catalog.visible().cloned().collect::<Vec<_>>() {
+                for entry in app
+                    .catalog
+                    .visible()
+                    .filter(|entry| !is_shared_entry(entry))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                {
                     let local = app.local_index.contains_key(&entry.id);
                     let holders: Vec<String> = app
                         .peer_have
@@ -2128,7 +2229,12 @@ fn page_vault(app: &mut GuiApp, ui: &mut egui::Ui) {
     theme::card_titled(ui, "加密上传", |ui| {
         ui.horizontal(|ui| {
             ui.label(theme::muted("文件路径"));
-            theme::input(ui, &mut app.vault_upload_path, "要加密上传的文件", 380.0);
+            theme::input(ui, &mut app.vault_upload_path, "要加密上传的文件", 320.0);
+            if platform::browse_supported() && theme::secondary_button(ui, "浏览…") {
+                if let Some(path) = platform::pick_file("选择要加密上传的文件") {
+                    app.vault_upload_path = path.display().to_string();
+                }
+            }
             ui.label(theme::muted("保留天数"));
             ui.add(egui::DragValue::new(&mut app.vault_ttl_days).range(1..=30));
             if theme::primary_button(ui, "加密上传") {
@@ -2146,7 +2252,12 @@ fn page_vault(app: &mut GuiApp, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label(theme::muted("下载目录"));
-            theme::input(ui, &mut app.vault_download_dir, "解密输出目录", 430.0);
+            theme::input(ui, &mut app.vault_download_dir, "解密输出目录", 340.0);
+            if platform::browse_supported() && theme::secondary_button(ui, "浏览…") {
+                if let Some(dir) = platform::pick_folder("选择解密输出文件夹") {
+                    app.vault_download_dir = dir.display().to_string();
+                }
+            }
             if theme::secondary_button(ui, "打开目录") {
                 let _ = std::fs::create_dir_all(&app.vault_download_dir);
                 if let Err(error) =
@@ -2267,7 +2378,10 @@ fn page_settings(app: &mut GuiApp, ui: &mut egui::Ui) {
             )));
         });
         ui.add_space(4.0);
-        ui.label(theme::muted(match platform::system_prefers_light() {
+        // 注意：不要在这里调用 platform::system_prefers_light()。Windows 下它会
+        // 每帧 spawn 一次 reg.exe，设置页会因此严重卡顿/假死；使用启动时缓存的
+        // 系统外观即可（跟随系统模式下由 maybe_follow_system_theme 节流刷新）。
+        ui.label(theme::muted(match app.system_light {
             Some(true) => "系统外观：浅色",
             Some(false) => "系统外观：深色",
             None => "系统外观：未知（跟随系统时回退深色）",
@@ -2785,6 +2899,19 @@ fn push_limited(buffer: &mut VecDeque<String>, line: String, limit: usize) {
     while buffer.len() > limit {
         buffer.pop_front();
     }
+}
+
+/// 目录条目是否来自「共享文件夹」（对端可浏览并逐个下载的文件）。
+fn is_shared_entry(entry: &CatalogEntry) -> bool {
+    entry.tags.iter().any(|tag| tag == "shared-folder")
+}
+
+fn tag_value<'a>(entry: &'a CatalogEntry, prefix: &str) -> Option<&'a str> {
+    entry
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix(prefix))
+        .filter(|value| !value.is_empty())
 }
 
 fn peer_name(app: &GuiApp, peer_id: &str) -> String {

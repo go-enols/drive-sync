@@ -5,6 +5,7 @@
 //! - 本模块的后台线程持有 tokio Runtime（全局唯一），负责 `Runtime::run()`、配对、一次性网络操作；
 //! - 另一个独立线程轮询本机剪切板（arboard，默认 800ms，哈希去重）。
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -12,7 +13,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use drive_client::{
     catalog_fetch, pair_initiate, pair_respond, vault_get, vault_list, vault_put, CatalogAddParams,
     LocalIndexEntry, PairUi, Runtime, RuntimeConfig, RuntimeEvent, RuntimeHandle, Store,
@@ -149,6 +150,10 @@ pub enum Cmd {
         access_token: String,
     },
     CatalogAdd {
+        path: PathBuf,
+    },
+    /// 选择整个文件夹：递归打包为 zip 后登记为目录条目（kind=folder）。
+    ShareFolder {
         path: PathBuf,
     },
     CatalogRemove {
@@ -546,13 +551,91 @@ fn handle_command(state: &mut BackendState, command: Cmd) -> bool {
                     let _ = msg_tx.send(UiMsg::CatalogAddResult { ok, message });
                 });
             } else {
-                let result = catalog_add_offline(&state.data_dir, &path);
+                let result = catalog_add_offline(&state.data_dir, &CatalogAddParams::new(&path));
                 let (ok, message) = match result {
                     Ok(entry_id) => (true, format!("已添加目录条目（离线）: {entry_id}")),
                     Err(error) => (false, format!("添加目录条目失败: {error:#}")),
                 };
                 state.send(UiMsg::CatalogAddResult { ok, message });
             }
+        }
+        Cmd::ShareFolder { path } => {
+            let data_dir = state.data_dir.clone();
+            let handle = state.sync.as_ref().map(|sync| sync.handle.clone());
+            let msg_tx = state.msg_tx.clone();
+            logbuf::log(format!("开始扫描要共享的文件夹: {}", path.display()));
+            state.tokio.spawn(async move {
+                let scan_dir = path.clone();
+                let scanned = tokio::task::spawn_blocking(move || scan_folder_files(&scan_dir)).await;
+                let (folder_name, files) = match scanned {
+                    Ok(Ok(value)) => value,
+                    Ok(Err(error)) => {
+                        let _ = msg_tx.send(UiMsg::CatalogAddResult {
+                            ok: false,
+                            message: format!("共享文件夹失败: {error:#}"),
+                        });
+                        return;
+                    }
+                    Err(error) => {
+                        let _ = msg_tx.send(UiMsg::CatalogAddResult {
+                            ok: false,
+                            message: format!("共享文件夹任务失败: {error:#}"),
+                        });
+                        return;
+                    }
+                };
+                let share_id = blake3_hex(path.to_string_lossy().as_bytes())
+                    .chars()
+                    .take(8)
+                    .collect::<String>();
+                let share_id_tag = format!("share-id:{share_id}");
+                let share_name_tag = format!("share-name:{folder_name}");
+                let mut added = 0usize;
+                let mut failed = 0usize;
+                for (file_path, relative) in files {
+                    let mut params = CatalogAddParams::new(&file_path);
+                    params.name = relative.clone();
+                    params.kind = "file".to_string();
+                    params.platform = TargetPlatform::Any;
+                    params.tags = vec![
+                        "shared-folder".to_string(),
+                        share_id_tag.clone(),
+                        share_name_tag.clone(),
+                    ];
+                    params.notes = format!("共享文件夹「{folder_name}」中的文件");
+                    let result = match handle.as_ref() {
+                        Some(handle) => handle
+                            .catalog_add(params)
+                            .await
+                            .map_err(|error| format!("{error:#}")),
+                        None => catalog_add_offline(&data_dir, &params)
+                            .map_err(|error| format!("{error:#}")),
+                    };
+                    match result {
+                        Ok(_) => added += 1,
+                        Err(error) => {
+                            failed += 1;
+                            logbuf::log(format!("共享文件失败 {relative}: {error}"));
+                        }
+                    }
+                }
+                let message = if added == 0 {
+                    format!("共享文件夹「{folder_name}」失败：没有成功登记任何文件")
+                } else {
+                    format!(
+                        "已共享文件夹「{folder_name}」：{added} 个文件已登记，对方可在目录中逐个下载{}",
+                        if failed > 0 {
+                            format!("（{failed} 个失败，详见日志）")
+                        } else {
+                            String::new()
+                        }
+                    )
+                };
+                let _ = msg_tx.send(UiMsg::CatalogAddResult {
+                    ok: added > 0,
+                    message,
+                });
+            });
         }
         Cmd::CatalogRemove { id } => {
             if let Some(handle) = state.sync.as_ref().map(|sync| sync.handle.clone()) {
@@ -998,28 +1081,37 @@ async fn test_connection(relay_url: &str, access_token: &str) -> UiMsg {
     }
 }
 
-fn catalog_add_offline(data_dir: &Path, path: &Path) -> Result<String> {
+fn catalog_add_offline(data_dir: &Path, params: &CatalogAddParams) -> Result<String> {
     let store = Store::open(data_dir)?;
     let identity = store.load_identity()?;
     let node = identity.device_id();
+    let path = &params.path;
     let (size, hash) = drive_client::util::hash_file(path)?;
     let (mut catalog, mut revision) = store.load_catalog()?;
     if catalog.node.trim().is_empty() {
         catalog.node = node.clone();
     }
-    let name = path
-        .file_name()
-        .map(|value| value.to_string_lossy().to_string())
-        .unwrap_or_else(|| "未命名".to_string());
+    let name = if params.name.trim().is_empty() {
+        path.file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名".to_string())
+    } else {
+        params.name.clone()
+    };
+    let kind = if params.kind.trim().is_empty() {
+        "file".to_string()
+    } else {
+        params.kind.clone()
+    };
     let entry = CatalogEntry::new(
         name,
-        "",
-        TargetPlatform::Any,
-        "file",
+        params.version.clone(),
+        params.platform,
+        kind,
         size,
         hash.clone(),
-        Vec::new(),
-        "",
+        params.tags.clone(),
+        params.notes.clone(),
         &node,
     );
     let now = now_ms();
@@ -1038,6 +1130,59 @@ fn catalog_add_offline(data_dir: &Path, path: &Path) -> Result<String> {
     store.save_catalog(&catalog, revision)?;
     store.save_local_index(&index)?;
     Ok(entry.id)
+}
+
+/// 共享文件夹时单个目录最多登记的文件数，避免一次生成过多目录条目。
+const MAX_SHARE_FILES: usize = 5000;
+
+/// 递归扫描文件夹，返回 `(文件夹展示名, [(本机绝对路径, 相对路径)])`。
+///
+/// 只读源文件夹；跳过符号链接，避免循环；相对路径统一使用 `/`，供对端浏览。
+fn scan_folder_files(folder: &Path) -> Result<(String, Vec<(PathBuf, String)>)> {
+    if !folder.is_dir() {
+        bail!("选择的路径不是文件夹: {}", folder.display());
+    }
+    let name = folder
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "共享文件夹".to_string());
+    let mut files = Vec::new();
+    scan_folder_into(folder, folder, &mut files)?;
+    if files.len() > MAX_SHARE_FILES {
+        bail!(
+            "文件夹内文件过多（{} 个，上限 {} 个），请分文件夹共享",
+            files.len(),
+            MAX_SHARE_FILES
+        );
+    }
+    Ok((name, files))
+}
+
+fn scan_folder_into(base: &Path, dir: &Path, files: &mut Vec<(PathBuf, String)>) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("读取文件夹失败: {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            scan_folder_into(base, &path, files)?;
+        } else if file_type.is_file() {
+            let relative = path
+                .strip_prefix(base)
+                .with_context(|| format!("计算相对路径失败: {}", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push((path, relative));
+            if files.len() > MAX_SHARE_FILES {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn catalog_remove_offline(data_dir: &Path, id: &str) -> Result<()> {
@@ -1137,4 +1282,56 @@ fn apply_update_blocking(data_dir: &Path) -> Result<String> {
         report.backup,
         drive_updater::restart_hint(&manifest.version)
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_folder_reports_relative_paths() {
+        let root = std::env::temp_dir().join(format!("drive-sync-share-test-{}", now_ms()));
+        let source = root.join("source-folder");
+        fs::create_dir_all(source.join("sub")).unwrap();
+        fs::write(source.join("a.txt"), b"hello").unwrap();
+        fs::write(source.join("sub").join("b.txt"), b"world").unwrap();
+
+        let (name, files) = scan_folder_files(&source).unwrap();
+        assert_eq!(name, "source-folder");
+        let paths: Vec<String> = files.iter().map(|(_, relative)| relative.clone()).collect();
+        assert!(paths.contains(&"a.txt".to_string()));
+        assert!(paths.contains(&"sub/b.txt".to_string()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn shared_folder_file_registers_as_browsable_entry() {
+        let root = std::env::temp_dir().join(format!("drive-sync-share-catalog-{}", now_ms()));
+        let data = root.join("data");
+        let store = Store::open(&data).unwrap();
+        let _ = store.load_or_create_identity("test-device").unwrap();
+        let source = root.join("my-folder");
+        fs::create_dir_all(source.join("sub")).unwrap();
+        fs::write(source.join("sub").join("b.txt"), b"world").unwrap();
+
+        let (_, files) = scan_folder_files(&source).unwrap();
+        let (path, relative) = files.first().unwrap();
+        let mut params = CatalogAddParams::new(path);
+        params.name = relative.clone();
+        params.kind = "file".to_string();
+        params.platform = TargetPlatform::Any;
+        params.tags = vec![
+            "shared-folder".to_string(),
+            "share-id:test".to_string(),
+            "share-name:my-folder".to_string(),
+        ];
+        let id = catalog_add_offline(&data, &params).unwrap();
+
+        let (catalog, _) = store.load_catalog().unwrap();
+        let entry = catalog.get(&id).expect("目录条目应存在");
+        assert_eq!(entry.name, "sub/b.txt");
+        assert!(entry.tags.iter().any(|tag| tag == "shared-folder"));
+        assert!(store.load_local_index().unwrap().contains_key(&id));
+        fs::remove_dir_all(&root).unwrap();
+    }
 }

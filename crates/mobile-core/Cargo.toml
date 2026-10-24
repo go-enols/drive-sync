@@ -10,6 +10,12 @@ name = "drive_mobile"
 # cdylib: Android .so / 桌面动态库；staticlib: iOS libdrive_mobile.a；rlib: 供测试复用
 crate-type = ["rlib", "cdylib", "staticlib"]
 
+[features]
+# 移动端生产环境使用 wss:// 中继，默认启用 rustls（与 CLI 的 --features tls 对应）。
+# 如需精简体积可 --no-default-features 构建，但将无法连接 wss://。
+default = ["tls"]
+tls = ["drive-client/tls"]
+
 [dependencies]
 drive-core = { workspace = true }
 drive-client = { workspace = true }

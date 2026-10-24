@@ -5,3 +5,6 @@ local.properties
 *.iml
 *.apk
 captures/
+
+# Rust .so 由 CI（cargo-ndk）或本地构建脚本生成，不提交
+app/src/main/jniLibs/

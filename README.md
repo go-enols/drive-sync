@@ -1,17 +1,17 @@
-# drive-sync
+﻿# drive-sync
 
 自托管的多设备同步系统：**无感共享剪切板** + **软件目录表**（软件本体留在本地，云端只中转不存储）+ 可选 **30 天加密云端暂存**。支持 Windows / Linux / macOS / Android / iOS，中继服务器端到端加密、零内容存储，个人 / 小团队自建。
 
-> 当前版本：**v0.2.0**。桌面端（Windows/Linux/macOS）为可常驻的命令行程序；Android 为可侧载 APK；iOS 为前台连接的原型 App（真机安装需 Apple 签名）。发布产物见 [GitHub Releases](https://github.com/go-enols/drive-sync/releases)，CI 预构建产物见 [Actions](https://github.com/go-enols/drive-sync/actions)。
+> 当前版本：**v0.3.0**。桌面端（Windows/Linux/macOS）为可常驻的命令行程序；Android 为可侧载 APK；iOS 为前台连接的原型 App（真机安装需 Apple 签名）。发布产物见 [GitHub Releases](https://github.com/go-enols/drive-sync/releases)，CI 预构建产物见 [Actions](https://github.com/go-enols/drive-sync/actions)。
 
 ## 下载与安装
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
-| Windows x64 | `drive-sync-v0.2.0-x86_64-pc-windows-msvc.zip` | 解压即用 `drive-sync.exe` / `drive-relay.exe` |
-| Linux x64 | `drive-sync-v0.2.0-x86_64-unknown-linux-gnu.tar.gz` | 需 X11 依赖（arboard）；Wayland 见平台文档 |
+| Windows x64 | `drive-sync-v0.3.0-x86_64-pc-windows-msvc.zip` | 解压即用 `drive-sync.exe` / `drive-relay.exe` |
+| Linux x64 | `drive-sync-v0.3.0-x86_64-unknown-linux-gnu.tar.gz` | 需 X11 依赖（arboard）；Wayland 见平台文档 |
 | macOS Apple Silicon / Intel | `...-aarch64-apple-darwin.tar.gz` / `...-x86_64-apple-darwin.tar.gz` | 解压即用 |
-| Android 8.0+（API 29+） | `drive-sync-v0.2.0-android-debug.apk`（Actions artifact） | 允许未知来源侧载；后台无感同步需 `adb appops` 授权（见下） |
+| Android 8.0+（API 29+） | `drive-sync-v0.3.0-android-debug.apk`（Actions artifact） | 允许未知来源侧载；权限在 App 内引导申请（无需 adb；后台接收自动，后台发送支持通知/悬浮球一键） |
 | iOS 16+ | `drive-sync-ios-simulator.zip`（Actions artifact） | CI 产物仅模拟器可运行；真机需用 Xcode + Apple ID 签名，详见 [iOS 文档](docs/mobile-ios.md) |
 
 > 没有 GitHub Release 时，可在 Actions 页面选择 `workflow_dispatch` 手动触发 `Release`（只产 artifact）或 `Android` / `iOS` / `CI` 工作流下载构建产物。
@@ -86,15 +86,42 @@ cargo build --release -p drive-relay -p drive-cli
 
 - **配对规则**：长期有效（无 TTL），但**任意一台设备连续 90 天没有成功同步/心跳**时，双方配对自动失效，再次使用需重新配对；`peers remove` 显式删除立即生效，并通过中继签发通知（离线对端上线后自动清理）。
 - **撤销通知**：中继离线信箱保存的是删除方**签名**的控制面元数据（≤90 天，不含内容），对端验签通过才删除记录；中继无法伪造撤销。
-- **无感剪切板**：桌面端默认自动监听/应用；Android 前台自动，后台无感需一次性 `adb shell appops set dev.drivesync.mobile READ_CLIPBOARD allow`；iOS 受系统限制只能前台自动 + 首次粘贴授权（详见移动端文档）。
+- **无感剪切板**：桌面端默认自动监听/应用；Android 前台自动，后台无感：接收方向自动，发送方向支持通知/悬浮球一键发送（无需 adb）；iOS 受系统限制只能前台自动 + 首次粘贴授权（详见移动端文档）。
 - **中继默认同一设备只允许一个连接**：daemon 运行时执行 `pair`/`catalog fetch`/`vault` 等一次性命令会互踢；先停 daemon 或中继加 `--allow-multi-conn`（原型仅不踢旧连接，不真正并行）。
 - `catalog fetch` 需要持有该软件且 daemon 在线的已配对设备。
 - 数据目录优先级：`--data-dir` > `DRIVE_SYNC_DATA_DIR` > 平台默认（Windows `%APPDATA%\drive-sync`，Linux `~/.local/share/drive-sync`）。
 - 命令细节以 `--help` 为准；自动更新签名/发布流程见 [docs/updates.md](docs/updates.md)。
 
+## 桌面 GUI 客户端（drive-sync-gui）
+
+不想用命令行的桌面用户可以直接使用图形客户端（纯 Rust [eframe/egui](https://github.com/emilk/egui)，无 Node/WebView，
+Windows / Linux / macOS 同一套源码），**所有设置都在 UI 页面完成**：
+
+- **首次运行向导**：欢迎说明 → 设备名 → 中继 URL + token（含“测试连接”）→ 配对（发起显示 8 位码 + SAS /
+  加入输入码或扫码串 + SAS 确认）→ 完成并启动同步；可返回上一步。
+- **主界面**（左侧导航）：状态（连接/在线设备/最近事件/开始停止同步）、设备（列表显示最近活跃与 90 天到期、
+  发起/加入/删除配对）、剪切板（文本/图片开关、轮询间隔、最近记录只显示类型大小）、软件目录（添加/删除/
+  从在线设备获取/打开下载目录）、云端暂存（加密上传/下载解密，TTL ≤30 天）、设置（中继/token/设备名、
+  开机自启、检查/立即更新、数据目录、关于）、日志页。
+- **与 CLI 完全共用数据目录**（`identity.json`/`config.json`/`peers.json` 等），可随时互换；
+  但同一设备的 GUI 同步 ≈ CLI `daemon`，**两者不要同时运行**（中继默认单连接，会互踢）。
+- 中文界面：自动加载系统字体（Windows `msyh.ttc`/`simhei.ttf`、macOS `PingFang.ttc`、Linux Noto CJK/wqy），
+  缺失时英文兜底；默认窗口 1000×700。
+- 开机自启：Windows `HKCU\...\Run`、Linux `~/.config/autostart/*.desktop`、macOS `~/Library/LaunchAgents/*.plist`。
+- 单实例运行；`--data-dir` 可指定目录。
+
+```bash
+cargo build --release -p drive-gui
+./target/release/drive-sync-gui            # Windows: target\release\drive-sync-gui.exe
+```
+
+发布包名：Windows `drive-sync-gui.exe`（在 zip 内，含首启向导）；Linux `drive-sync-gui`（tar.gz）；macOS `DriveSync.app`（在 tar.gz 内）。
+详细功能、首次使用、打包（macOS `.app` 的 `Info.plist` 模板见
+`crates/gui/packaging/Info.plist`）、验收截图与故障排查见 [docs/gui.md](docs/gui.md)。
+
 ## 移动端（原型）
 
-- Android：安装 APK → 填自建 relay 地址/token → 配对 → 前台自动同步；后台无感需 adb appops 授权（测试用，见 [Android 文档](docs/mobile-android.md)）。Android 10+ 后台读剪贴板系统限制决定了必须这一步授权。
+- Android：安装 APK → 填自建 relay 地址/token → 配对 → 前台自动同步；后台接收自动；后台发送受系统限制，支持通知/悬浮球一键发送，无需 adb（见 [Android 文档](docs/mobile-android.md)）。Android 10+ 后台读剪贴板系统限制决定了必须这一步授权。
 - iOS：Xcode 打开 `mobile/ios` 工程，用 Apple ID 自动签名安装到真机；或使用 CI 的模拟器包。iOS 16+ 读剪贴板需用户授权、无后台同步 API，见 [iOS 文档](docs/mobile-ios.md)。
 - 移动端当前为原型：无系统推送（FCM/APNs）集成，App 需在前台保持连接（Android 可选前台服务）。
 
@@ -106,6 +133,7 @@ crates/
   relay/         # 中继服务器（lib + bin，含撤销通知离线信箱）
   client-core/   # 客户端同步引擎：Store / Engine / WS 连接 / 传输收发 / spool / 活跃期
   cli/           # drive-sync 命令（桌面剪切板后端 + update 子命令）
+  gui/           # drive-sync-gui 桌面图形客户端（eframe/egui：向导 + 全部设置页）
   updater/       # 自动更新：签名清单、下载校验、自替换、sign-manifest
   mobile-core/   # 移动端 Rust FFI（C ABI + JNI）
   e2e-tests/     # 端到端测试与 drive-bench 延迟基准
@@ -134,12 +162,13 @@ powershell -NoProfile -File scripts/demo.ps1    # 一键演示（同机双设备
 - 连接级前向保密，重连即换新临时密钥；
 - 云端暂存只存密文，密钥只在设备；TTL 到期物理删除；
 - 自动更新清单 Ed25519 签名 + BLAKE3 校验，默认拒绝未签名更新；
-- 已知限制：无消息级前向保密/Double Ratchet（v1.0 计划）；iOS 无法后台静默同步；Android 后台无感需一次性 adb 授权。
+- 已知限制：无消息级前向保密/Double Ratchet（v1.0 计划）；iOS 无法后台静默同步；Android 后台发送需一键（通知/悬浮球，无需 adb）。
 
 ## 文档
 
 - [架构方案](docs/architecture.md)
 - [协议规范 v2](docs/protocol.md)
+- [桌面 GUI 客户端](docs/gui.md)
 - [部署与运维](docs/deployment.md)
 - [自动更新与发布流程](docs/updates.md)
 - [桌面平台调研](docs/platform-desktop.md) / [移动端平台调研](docs/platform-mobile.md)
@@ -150,7 +179,7 @@ powershell -NoProfile -File scripts/demo.ps1    # 一键演示（同机双设备
 
 - v0.1：Rust 核心 + 中继 + 桌面 CLI + 剪切板/目录/文件传输/暂存 + e2e（已完成）
 - v0.2（当前）：项目更名；离线撤销通知信箱；90 天活跃期；自动更新；GitHub Actions 多平台产物；Android/iOS 原型 App
-- v0.3：局域网 mDNS + QUIC 直连、二进制帧/CBOR、桌面托盘 GUI、systemd/自启动、移动端系统推送（FCM/APNs）
+- v0.3（当前）：桌面 GUI（PolyBot 风格 + 首启向导）、移动端权限引导与深色 UI、离线撤销/90 天规则；后续：局域网 mDNS + QUIC 直连、托盘、移动端系统推送
 - v1.0：多用户、设备撤销广播/密钥轮换、Double Ratchet/后量子、自动更新灰度回滚
 
 ## License

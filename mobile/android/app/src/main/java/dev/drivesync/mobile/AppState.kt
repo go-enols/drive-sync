@@ -11,14 +11,17 @@ import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * 进程级共享状态：原生句柄、暂停开关、事件监听、远端剪切板应用与回环抑制。
+ * 进程级共享状态：原生句柄、暂停开关、事件监听、远端剪切板应用与去重。
  *
- * 前台 Activity 与后台前台服务共用这一份状态（同一进程）。
+ * 前台 Activity、后台前台服务、透明同步页共用这一份状态（同一进程）。
  * 回调全部切到主线程后再分发给监听者，UI 可直接更新控件。
  */
 object AppState {
     /** 本机自动发送后，在这段时间内忽略同内容（避免“远端写入→又发回去”的回环）。 */
     private const val ECHO_WINDOW_MS = 5_000L
+
+    /** 通知 Action / 悬浮球 同一内容去重窗口（防止连点重复发送）。 */
+    private const val DEDUPE_WINDOW_MS = 10_000L
 
     @Volatile
     var appContext: Context? = null
@@ -44,6 +47,8 @@ object AppState {
     private val listeners = CopyOnWriteArrayList<(JSONObject) -> Unit>()
     private var lastRemoteHash: String = ""
     private var lastRemoteAtMs: Long = 0L
+    private var lastSentHash: String = ""
+    private var lastSentAtMs: Long = 0L
 
     private val callbackImpl = object : Native.Callback {
         override fun onEvent(json: String) {
@@ -99,7 +104,26 @@ object AppState {
             SystemClock.elapsedRealtime() - lastRemoteAtMs < ECHO_WINDOW_MS
     }
 
-    /** 收到远端剪切板：写系统剪贴板 + 通知 + 更新预览（主线程调用）。 */
+    /** 是否与上次发送内容相同（后台一键同步的连点去重）。 */
+    @Synchronized
+    fun isRecentlySent(hash: String): Boolean {
+        return hash == lastSentHash &&
+            SystemClock.elapsedRealtime() - lastSentAtMs < DEDUPE_WINDOW_MS
+    }
+
+    /** 是否已经发送过该内容（前台轮询用，避免手动同步后再次重复发送）。 */
+    @Synchronized
+    fun isSameAsLastSent(hash: String): Boolean = hash == lastSentHash
+
+    /** 记录一次成功发送（同时更新预览与去重哈希）。 */
+    @Synchronized
+    fun markSent(text: String) {
+        lastSentHash = sha256(text)
+        lastSentAtMs = SystemClock.elapsedRealtime()
+        lastClipboardPreview = text
+    }
+
+    /** 接收远端剪切板：写系统剪贴板 + 通知 + 更新预览（主线程调用）。 */
     @Synchronized
     private fun applyRemoteClipboard(context: Context, text: String, fromDeviceId: String) {
         val clipboard = context.getSystemService(ClipboardManager::class.java)
@@ -125,9 +149,5 @@ object AppState {
                 // 忽略
             }
         }
-    }
-
-    fun markLocalSent(text: String) {
-        lastClipboardPreview = text
     }
 }

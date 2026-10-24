@@ -47,7 +47,7 @@ targets:
       base:
         PRODUCT_NAME: DriveSync
         PRODUCT_BUNDLE_IDENTIFIER: dev.drivesync.mobile
-        MARKETING_VERSION: "0.2.0"
+        MARKETING_VERSION: "0.3.0"
         CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_FILE: DriveSync/Info.plist
         GENERATE_INFOPLIST_FILE: NO

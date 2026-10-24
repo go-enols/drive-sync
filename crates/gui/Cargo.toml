@@ -1,0 +1,26 @@
+[package]
+name = "drive-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "drive-sync 桌面图形客户端（eframe/egui）：首次运行向导、配对、剪切板、目录、暂存与设置"
+
+[[bin]]
+name = "drive-sync-gui"
+path = "src/main.rs"
+
+[dependencies]
+drive-core = { workspace = true }
+drive-client = { workspace = true, features = ["tls"] }
+drive-updater = { workspace = true }
+eframe = "0.31"
+egui = "0.31"
+arboard = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }

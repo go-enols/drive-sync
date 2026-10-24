@@ -1,4 +1,4 @@
-# drive-sync CI：格式 / clippy / 测试 / release 构建
+﻿# drive-sync CI：格式 / clippy / 测试 / release 构建
 #
 # 触发：push 到 main、所有 PR、手动 workflow_dispatch。
 # 说明：
@@ -48,7 +48,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libwayland-dev
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
       - name: Install pinned toolchain + clippy
         run: |
           rustup toolchain install 1.96.0 --profile minimal
@@ -72,7 +72,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libwayland-dev
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
       - name: Test (unit + integration，e2e 除外)
         run: cargo test --workspace --exclude drive-e2e
       - name: Test e2e（串行，避免时序敏感用例互相干扰）
@@ -93,13 +93,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libwayland-dev
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
       - name: Build release binaries
         shell: bash
         run: |
           set -euo pipefail
           # 发布产物启用 tls feature（可连 wss:// 中继）；与 release.yml 保持一致。
-          cargo build --release --locked -p drive-cli -p drive-relay -p drive-updater --bins \
+          cargo build --release --locked -p drive-cli -p drive-relay -p drive-updater -p drive-gui --bins \
             --features drive-cli/tls
       - name: Smoke check CLI help
         shell: bash

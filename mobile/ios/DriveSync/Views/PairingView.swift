@@ -2,8 +2,7 @@
 //  PairingView.swift
 //  drive-sync iOS
 //
-//  配对：A 端发起显示 8 位码（+ dsync-pair-v1: 二维码），B 端输入码/粘贴扫码串加入。
-//  C ABI：dm_pair_start / dm_pair_join（阻塞，最多 ~130s，调用在后台线程）。
+//  配对页（PolyBot 深色主题）：发起配对（8 位码 + dsync-pair-v1: 二维码）/ 加入配对 / 已配对设备。
 //
 
 import SwiftUI
@@ -13,128 +12,151 @@ struct PairingView: View {
     @State private var joinCode = ""
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    if !model.core.isRunning {
-                        Text("先到「连接」页连接中继，才能配对。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+        PolyScreen {
+            BrandHeader()
+
+            // MARK: 发起配对（A 端）
+            PolyCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    CardTitle(icon: "qrcode", title: "发起配对（A 端）")
+                    Text("生成 8 位配对码并告诉对方设备；对方也可直接扫描下方二维码。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if let pairCode = model.pairCode {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("把这 8 位配对码告诉对方设备，或让对方扫描下面的二维码")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+                        VStack(spacing: 12) {
                             Text(pairCode.formattedCode)
-                                .font(.system(size: 40, weight: .bold, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                            Text("约 120 秒内有效，一次性使用。")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 38, weight: .bold, design: .monospaced))
+                                .tracking(2)
+                                .foregroundStyle(Theme.mint)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: Theme.cornerSmall, style: .continuous)
+                                        .fill(Theme.background)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.cornerSmall, style: .continuous)
+                                        .strokeBorder(Theme.mint.opacity(0.35), lineWidth: 1)
+                                )
+
+                            Text("约 120 秒内有效，一次性使用")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.textTertiary)
+
+                            Button {
+                                model.copyToPasteboard(text: pairCode.qr)
+                            } label: {
+                                Label("复制 dsync-pair-v1: 配对串", systemImage: "doc.on.doc")
+                            }
+                            .buttonStyle(PolyLinkButtonStyle())
+
                             if !pairCode.qr.isEmpty {
-                                Button {
-                                    model.copyToPasteboard(text: pairCode.qr)
-                                } label: {
-                                    Label("复制 dsync-pair-v1: 配对串", systemImage: "doc.on.doc")
-                                        .font(.caption)
-                                }
                                 QRCodeView(text: pairCode.qr)
-                                    .frame(width: 160, height: 160)
+                                    .frame(width: 180, height: 180)
                                     .frame(maxWidth: .infinity, alignment: .center)
                             }
                         }
-                        .padding(.vertical, 4)
                     } else {
-                        Text("点下面的按钮发起配对，配对码会显示在这里。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        EmptyHint(icon: "number", text: "点下面的按钮发起配对，配对码会显示在这里。")
                     }
 
                     Button {
                         Task { await model.pairStart() }
                     } label: {
-                        if model.pairingBusy {
-                            HStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            if model.pairingBusy {
                                 ProgressView()
-                                Text("正在生成配对码…")
+                                    .tint(Theme.background)
                             }
-                        } else {
-                            Label(
-                                model.pairCode == nil ? "发起配对（生成 8 位码）" : "重新生成配对码",
-                                systemImage: "qrcode"
-                            )
+                            Text(model.pairingBusy
+                                 ? "正在生成配对码…"
+                                 : (model.pairCode == nil ? "发起配对（生成 8 位码）" : "重新生成配对码"))
                         }
                     }
+                    .buttonStyle(PolyPrimaryButtonStyle())
                     .disabled(!model.core.isRunning || model.pairingBusy)
-                } header: {
-                    Text("发起配对（A 端）")
-                } footer: {
-                    Text("生成配对码后配对在后台继续，成功后自动出现在设备列表，并恢复同步会话。")
-                }
+                    .opacity(!model.core.isRunning || model.pairingBusy ? 0.5 : 1.0)
 
-                Section {
-                    TextField("8 位配对码或 dsync-pair-v1: 配对串", text: $joinCode)
-                        .keyboardType(.numbersAndPunctuation)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    if !model.core.isRunning {
+                        EmptyHint(icon: "link.badge.plus", text: "配对需要中继连接：先到「连接」页连接中继。")
+                    }
+                }
+            }
+
+            // MARK: 加入配对（B 端）
+            PolyCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    CardTitle(icon: "arrow.right.circle", title: "加入配对（B 端）")
+
+                    PolyTextField(
+                        title: "配对码或扫码串",
+                        placeholder: "8 位数字或 dsync-pair-v1: 串",
+                        text: $joinCode,
+                        icon: "number",
+                        keyboard: .numbersAndPunctuation
+                    )
 
                     Button {
                         let code = joinCode
                         joinCode = ""
                         Task { await model.pairJoin(code: code) }
                     } label: {
-                        if model.pairingBusy {
-                            HStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            if model.pairingBusy {
                                 ProgressView()
-                                Text("正在配对（最多约 130 秒）…")
+                                    .tint(Theme.background)
                             }
-                        } else {
-                            Label("加入配对（B 端）", systemImage: "arrow.right.circle")
+                            Text(model.pairingBusy ? "正在配对（最多约 130 秒）…" : "加入配对")
                         }
                     }
+                    .buttonStyle(PolyPrimaryButtonStyle())
                     .disabled(joinCode.isBlank || !model.core.isRunning || model.pairingBusy)
+                    .opacity(joinCode.isBlank || !model.core.isRunning || model.pairingBusy ? 0.5 : 1.0)
 
                     if let join = model.lastPairJoin {
-                        LabeledContent("最近配对") {
-                            Text("\(join.peerName)（SAS \(join.sas)）")
-                                .font(.caption)
-                        }
+                        InfoRow(label: "最近配对", value: "\(join.peerName)（SAS \(join.sas)）")
                     }
-                } header: {
-                    Text("加入配对（B 端）")
-                } footer: {
-                    Text("用 iPhone 相机扫描对方屏幕上的二维码可得到 dsync-pair-v1: 串，粘贴到输入框即可。SAS 在原型阶段自动确认，无需手动比对。")
-                }
 
-                Section {
-                    if model.peers.isEmpty {
-                        Text("暂无已配对设备。配对成功后，对方会出现在这里。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(model.peers) { peer in
-                            PeerRow(peer: peer)
-                        }
-                    }
-                } header: {
+                    Text("用 iPhone 相机扫描对方二维码可得到 dsync-pair-v1: 串，粘贴到输入框即可；SAS 在原型阶段自动确认。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            // MARK: 已配对设备
+            PolyCard {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text("已配对设备（\(model.peers.count)）")
-                        Spacer()
+                        CardTitle(icon: "person.2", title: "已配对设备（\(model.peers.count)）")
+                        Spacer(minLength: 8)
                         Button("刷新") {
                             Task { await model.refreshLiveData() }
                         }
-                        .font(.caption)
+                        .buttonStyle(PolyLinkButtonStyle())
                         .disabled(!model.core.isRunning)
                     }
-                } footer: {
-                    Text("配对永久有效（无 TTL），除非任一方显式删除本地配对记录。本轮 iOS App 暂未提供删除入口，可用桌面端 `drive-sync peers remove`；删除后对端会收到撤销通知。")
+
+                    if model.peers.isEmpty {
+                        EmptyHint(icon: "person.badge.plus", text: "暂无已配对设备。配对成功后，对方会出现在这里。")
+                    } else {
+                        ForEach(model.peers) { peer in
+                            PeerRow(peer: peer)
+                            if peer.id != model.peers.last?.id {
+                                PolyDivider()
+                            }
+                        }
+                    }
                 }
             }
-            .navigationTitle("配对")
-            .scrollDismissesKeyboard(.interactively)
+
+            Text("配对永久有效（无 TTL），除非任一方显式删除本地配对记录；本轮 iOS 未提供删除入口，可用桌面端 drive-sync peers remove。")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 4)
         }
     }
 }

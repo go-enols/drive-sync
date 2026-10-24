@@ -72,10 +72,23 @@ final class ClipboardLoopGuard {
 
 /// App 不在前台时收到远端剪贴板内容 → 发一条本地通知（只放摘要，不放全文）。
 enum ClipboardNotifier {
-    /// 启动时请求通知权限（被拒绝也不影响前台自动同步）。
-    static func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
-            // 权限结果不影响主流程；前台自动写入不依赖通知。
+    /// 请求通知权限（首次引导/权限页触发；被拒绝也不影响前台自动同步）。
+    static func requestAuthorization(completion: ((Bool) -> Void)? = nil) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            guard let completion else { return }
+            DispatchQueue.main.async {
+                completion(granted)
+            }
+        }
+    }
+
+    /// 查询当前通知权限（供 Onboarding/权限页展示）。
+    static func authorizationStatus(completion: @escaping (UNAuthorizationStatus) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let status = settings.authorizationStatus
+            DispatchQueue.main.async {
+                completion(status)
+            }
         }
     }
 

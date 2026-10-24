@@ -1,32 +1,31 @@
 package dev.drivesync.mobile
 
-import android.Manifest
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
+import android.content.Intent
 import android.os.Bundle
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
 /**
- * 单 Activity 控制台：配置中继 → 连接 → 配对 → 剪切板自动同步 → 软件目录只读展示。
+ * PolyBot 风格控制台：配置中继 → 连接 → 配对 → 剪切板同步 → 设备/目录 → 权限引导。
  *
- * 剪切板同步是“无感自动”的：前台由 [ClipboardSync] 轮询自动发送，收到远端内容自动写回系统
- * 剪贴板并通知；“立即发送当前剪切板”仅作为手动兜底。后台无感依赖 [SyncService] 前台服务
- * + 可选 READ_CLIPBOARD appops 授权（详见 docs/mobile-android.md）。
+ * 剪切板能力（如实呈现 Android 平台边界）：
+ * - 前台：自动轮询剪贴板并发送（无感）；
+ * - 后台接收：前台服务保持连接，收到远端内容自动写剪贴板 + 通知（无感）；
+ * - 后台发送：系统禁止后台读剪贴板（普通权限无解）→ 通知栏 Action / 悬浮同步球
+ *   一键完成，无需 adb。
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var etRelay: TextInputEditText
@@ -40,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvPairStatus: TextView
     private lateinit var tvClipboard: TextView
     private lateinit var tvCatalog: TextView
+    private lateinit var tvPermissionHint: TextView
     private lateinit var btnSaveConfig: MaterialButton
     private lateinit var btnConnect: MaterialButton
     private lateinit var btnDisconnect: MaterialButton
@@ -47,9 +47,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPairJoin: MaterialButton
     private lateinit var btnSendClipboard: MaterialButton
     private lateinit var btnRefresh: MaterialButton
+    private lateinit var btnPermissions: MaterialButton
     private lateinit var swPause: SwitchMaterial
 
-    private val prefs by lazy { getSharedPreferences("drive_sync", Context.MODE_PRIVATE) }
+    private val prefs by lazy {
+        getSharedPreferences(SyncLauncher.PREFS, Context.MODE_PRIVATE)
+    }
 
     private val dataDir: String
         get() = File(filesDir, "drive-sync").absolutePath
@@ -65,11 +68,17 @@ class MainActivity : AppCompatActivity() {
         AppState.addEventListener(eventListener)
         wireButtons()
         updateConnectedUi()
-        requestNotificationPermissionIfNeeded()
+        showOnboardingIfNeeded()
         if (AppState.handle != 0L) {
             updateConnectedUi()
             refreshAll()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        FloatingBallManager.syncFromPrefs(this)
+        updatePermissionHint()
     }
 
     override fun onDestroy() {
@@ -89,6 +98,7 @@ class MainActivity : AppCompatActivity() {
         tvPairStatus = findViewById(R.id.tvPairStatus)
         tvClipboard = findViewById(R.id.tvClipboard)
         tvCatalog = findViewById(R.id.tvCatalog)
+        tvPermissionHint = findViewById(R.id.tvPermissionHint)
         btnSaveConfig = findViewById(R.id.btnSaveConfig)
         btnConnect = findViewById(R.id.btnConnect)
         btnDisconnect = findViewById(R.id.btnDisconnect)
@@ -96,6 +106,7 @@ class MainActivity : AppCompatActivity() {
         btnPairJoin = findViewById(R.id.btnPairJoin)
         btnSendClipboard = findViewById(R.id.btnSendClipboard)
         btnRefresh = findViewById(R.id.btnRefresh)
+        btnPermissions = findViewById(R.id.btnPermissions)
         swPause = findViewById(R.id.swPause)
     }
 
@@ -107,6 +118,9 @@ class MainActivity : AppCompatActivity() {
         btnPairJoin.setOnClickListener { pairJoin() }
         btnSendClipboard.setOnClickListener { sendCurrentClipboard() }
         btnRefresh.setOnClickListener { refreshAll() }
+        btnPermissions.setOnClickListener {
+            startActivity(Intent(this, PermissionsActivity::class.java))
+        }
         swPause.setOnCheckedChangeListener { _, checked ->
             AppState.paused = checked
             val handle = AppState.handle
@@ -118,16 +132,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPrefs() {
-        etRelay.setText(prefs.getString("relay", ""))
-        etToken.setText(prefs.getString("token", ""))
-        etDeviceName.setText(prefs.getString("device_name", "Android 手机"))
+        etRelay.setText(prefs.getString(SyncLauncher.KEY_RELAY, ""))
+        etToken.setText(prefs.getString(SyncLauncher.KEY_TOKEN, ""))
+        etDeviceName.setText(
+            prefs.getString(SyncLauncher.KEY_DEVICE_NAME, "Android 手机"),
+        )
     }
 
     private fun savePrefs(relay: String, token: String, deviceName: String) {
         prefs.edit()
-            .putString("relay", relay)
-            .putString("token", token)
-            .putString("device_name", deviceName)
+            .putString(SyncLauncher.KEY_RELAY, relay)
+            .putString(SyncLauncher.KEY_TOKEN, token)
+            .putString(SyncLauncher.KEY_DEVICE_NAME, deviceName)
             .apply()
     }
 
@@ -156,7 +172,7 @@ class MainActivity : AppCompatActivity() {
         val config = readConfig() ?: return
         lifecycleScope.launch {
             val message = withContext(Dispatchers.IO) {
-                val init = parseJson(Native.dmInit(dataDir, config.third))
+                val init = SyncLauncher.parseJson(Native.dmInit(dataDir, config.third))
                 if (!init.optBoolean("ok")) {
                     return@withContext "初始化失败：${init.optString("error")}"
                 }
@@ -164,7 +180,7 @@ class MainActivity : AppCompatActivity() {
                     .put("relay_url", config.first)
                     .put("access_token", config.second)
                     .put("device_name", config.third)
-                val saved = parseJson(Native.dmConfigSetRelay(relayJson.toString()))
+                val saved = SyncLauncher.parseJson(Native.dmConfigSetRelay(relayJson.toString()))
                 if (!saved.optBoolean("ok")) {
                     return@withContext "保存配置失败：${saved.optString("error")}"
                 }
@@ -180,53 +196,32 @@ class MainActivity : AppCompatActivity() {
             toast("已连接")
             return
         }
-        val config = readConfig() ?: return
+        readConfig() ?: return
         btnConnect.isEnabled = false
         lifecycleScope.launch {
-            val message = withContext(Dispatchers.IO) {
-                val init = parseJson(Native.dmInit(dataDir, config.third))
-                if (!init.optBoolean("ok")) {
-                    return@withContext "初始化失败：${init.optString("error")}"
-                }
-                val relayJson = JSONObject()
-                    .put("relay_url", config.first)
-                    .put("access_token", config.second)
-                    .put("device_name", config.third)
-                val saved = parseJson(Native.dmConfigSetRelay(relayJson.toString()))
-                if (!saved.optBoolean("ok")) {
-                    return@withContext "保存配置失败：${saved.optString("error")}"
-                }
-                val handle = Native.dmStart(config.first, config.second, AppState.callback())
-                if (handle == 0L) {
-                    return@withContext "启动失败：${Native.dmLastError() ?: "未知错误"}"
-                }
-                AppState.handle = handle
-                "连接已启动 · 设备 ${init.optString("name")} (${init.optString("device_id")})"
-            }
+            val result = withContext(Dispatchers.IO) { SyncLauncher.ensureRuntime(this@MainActivity) }
             btnConnect.isEnabled = true
-            if (AppState.handle != 0L) {
-                updateConnectedUi()
-                SyncService.start(this@MainActivity)
-                ClipboardSync.ensureStarted()
-                toast("已启动连接，正在连接中继…")
-                refreshAll()
-            } else {
-                tvConnStatus.text = message
-                toast(message)
+            if (result != "ok") {
+                tvConnStatus.text = "启动失败：$result"
+                toast("启动失败：$result")
+                return@launch
             }
+            SyncService.start(this@MainActivity)
+            ClipboardSync.ensureStarted()
+            FloatingBallManager.syncFromPrefs(this@MainActivity)
+            updateConnectedUi()
+            toast("已启动连接，正在连接中继…")
+            refreshAll()
         }
     }
 
     private fun disconnect() {
-        val handle = AppState.handle
-        AppState.handle = 0L
+        SyncLauncher.stopRuntime()
         AppState.paused = false
         swPause.isChecked = false
         ClipboardSync.stop()
         SyncService.stop(this)
-        if (handle != 0L) {
-            Thread { Native.dmStop(handle) }.start()
-        }
+        FloatingBallManager.hide()
         updateDisconnectedUi()
         toast("已断开")
     }
@@ -244,7 +239,9 @@ class MainActivity : AppCompatActivity() {
         btnPairStart.isEnabled = false
         tvPairStatus.text = "正在生成配对码（会临时暂停同步，完成后自动恢复）…"
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { parseJson(Native.dmPairStart(handle)) }
+            val result = withContext(Dispatchers.IO) {
+                SyncLauncher.parseJson(Native.dmPairStart(handle))
+            }
             btnPairStart.isEnabled = true
             if (result.optBoolean("ok")) {
                 tvPairCode.text = formatPairCode(result.optString("code"))
@@ -270,7 +267,7 @@ class MainActivity : AppCompatActivity() {
         tvPairStatus.text = "正在加入配对（最长约 130 秒）…"
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                parseJson(Native.dmPairJoin(handle, input))
+                SyncLauncher.parseJson(Native.dmPairJoin(handle, input))
             }
             btnPairJoin.isEnabled = true
             if (result.optBoolean("ok")) {
@@ -311,9 +308,9 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { Native.dmSendClipboardText(handle, text) }
             if (result == 0) {
-                AppState.markLocalSent(text)
+                AppState.markSent(text)
                 tvClipboard.text = text.take(500)
-                toast("已发送当前剪切板")
+                toast("已发送当前剪贴板")
             } else {
                 toast("发送失败（code=$result）：${Native.dmLastError() ?: ""}")
             }
@@ -335,9 +332,9 @@ class MainActivity : AppCompatActivity() {
                     Native.dmStatusJson(handle),
                 )
             }
-            renderPeers(parseJson(snapshot.first))
-            renderCatalog(parseJson(snapshot.second))
-            renderStatus(parseJson(snapshot.third))
+            renderPeers(SyncLauncher.parseJson(snapshot.first))
+            renderCatalog(SyncLauncher.parseJson(snapshot.second))
+            renderStatus(SyncLauncher.parseJson(snapshot.third))
         }
     }
 
@@ -346,7 +343,7 @@ class MainActivity : AppCompatActivity() {
         if (handle == 0L) return
         lifecycleScope.launch {
             val json = withContext(Dispatchers.IO) { Native.dmPeersJson(handle) }
-            renderPeers(parseJson(json))
+            renderPeers(SyncLauncher.parseJson(json))
         }
     }
 
@@ -355,7 +352,7 @@ class MainActivity : AppCompatActivity() {
         if (handle == 0L) return
         lifecycleScope.launch {
             val json = withContext(Dispatchers.IO) { Native.dmCatalogJson(handle) }
-            renderCatalog(parseJson(json))
+            renderCatalog(SyncLauncher.parseJson(json))
         }
     }
 
@@ -430,7 +427,6 @@ class MainActivity : AppCompatActivity() {
             append(" · 在线=").append(json.optInt("peers_online"))
             append(" · 暂停=").append(json.optBoolean("paused"))
             append(" · 配对中=").append(json.optBoolean("pairing"))
-            append(" · 中继=").append(json.optString("relay_url"))
         }
     }
 
@@ -481,6 +477,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
+    // 首次引导 / 权限
+    // ------------------------------------------------------------------
+
+    private fun showOnboardingIfNeeded() {
+        if (prefs.getBoolean(SyncLauncher.KEY_ONBOARDING_DONE, false)) return
+        prefs.edit().putBoolean(SyncLauncher.KEY_ONBOARDING_DONE, true).apply()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("欢迎使用 drive-sync")
+            .setMessage(
+                "下一步建议开启（均在 App 内完成，无需 adb）：\n" +
+                    "• 通知权限：接收远端剪切板提醒与“一键同步”按钮\n" +
+                    "• 电池优化豁免：保持后台服务存活\n" +
+                    "• 可选悬浮窗：开启悬浮同步球\n\n" +
+                    "Android 限制：App 在后台时系统禁止读取剪贴板，发送请点通知栏" +
+                    "「同步当前剪贴板」或悬浮球；接收方向始终自动。",
+            )
+            .setPositiveButton("去开启") { _, _ ->
+                startActivity(Intent(this, PermissionsActivity::class.java))
+            }
+            .setNegativeButton("稍后", null)
+            .show()
+    }
+
+    private fun updatePermissionHint() {
+        val notificationReady = PermissionsActivity.isNotificationGranted(this)
+        tvPermissionHint.text = if (notificationReady) {
+            "后台发送：下拉通知栏点「同步当前剪贴板」，或开启悬浮同步球（一键完成）。"
+        } else {
+            "通知权限未开启：会影响远端提醒与一键同步按钮，请到「权限与后台同步」开启。"
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 工具
     // ------------------------------------------------------------------
 
@@ -488,7 +517,7 @@ class MainActivity : AppCompatActivity() {
         val connected = AppState.handle != 0L
         btnConnect.isEnabled = !connected
         btnDisconnect.isEnabled = connected
-        tvConnStatus.text = if (connected) "已连接（后台自动同步中）" else "未连接"
+        tvConnStatus.text = if (connected) "已连接（后台接收自动同步中）" else "未连接"
     }
 
     private fun updateDisconnectedUi() {
@@ -496,23 +525,6 @@ class MainActivity : AppCompatActivity() {
         btnDisconnect.isEnabled = false
         tvConnStatus.text = "未连接"
         tvSyncStatus.text = "—"
-    }
-
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
-        }
-    }
-
-    private fun parseJson(text: String?): JSONObject {
-        return try {
-            JSONObject(text ?: "{}")
-        } catch (_: Exception) {
-            JSONObject().put("ok", false).put("error", "原生返回的 JSON 解析失败")
-        }
     }
 
     private fun formatPairCode(code: String): String {

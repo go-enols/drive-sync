@@ -1,14 +1,16 @@
-﻿# drive-sync iOS 客户端（SwiftUI）
+# drive-sync iOS 客户端（SwiftUI）
 
-> 版本：v0.2.0（2026-10 原型） · Bundle ID：`dev.drivesync.mobile` · Deployment Target：iOS 16.0
+> 版本：v0.3.0（2026-10 原型） · UI：PolyBot 深色主题（背景 `#0B0F14` + 薄荷绿 `#22E3B0`）
+> Bundle ID：`dev.drivesync.mobile` · Deployment Target：iOS 16.0
 > 代码：`mobile/ios/**` · CI：`.github/workflows/ios.yml` · 共享 C ABI：`crates/mobile-core/include/drive_mobile.h`
 > 协议基准：[protocol.md](protocol.md)；移动端平台调研：[platform-mobile.md](platform-mobile.md)
 
 本轮交付一个**可编译、可安装到模拟器、可用个人 Apple ID 签安装到 iPhone** 的原型 App：
 功能与 Android 端对齐（配置 / 配对 / 剪贴板收发 / 状态 / 设备列表 / 只读软件目录），
+UI 统一为 **PolyBot 风格深色主题（深色背景 + 薄荷绿主色）**，并带首次启动引导与权限状态页（见 §3）；
 剪贴板采用**无感自动同步**（前台自动发、收到自动写），但受 iOS 平台限制：
 **无后台静默能力（只有前台 + 后台约 25 秒接收窗口）、iOS 16+ 首次读取需系统粘贴授权、无 APNs 推送**。
-能力边界见 [§9](#9-无感同步能力边界与-ios-平台限制必读)。
+能力边界见 [§10](#10-无感同步能力边界与-ios-平台限制必读)。
 
 ---
 
@@ -32,7 +34,7 @@
 要点：
 
 - **网络、加密、配对、持久化全部在 Rust 侧**（`crates/mobile-core` 复用 `drive-core` / `drive-client`），Swift 只做 UI 与系统剪贴板；
-- **无感同步**：前台每 ~1.5s 轮询 `UIPasteboard.changeCount` 检测变化 → 自动 `dm_send_clipboard_text`；收到远端内容 → 自动写 `UIPasteboard`。回环抑制用文本哈希 + 120s 时间窗，避免 A→B→A 回环（见 [§9](#9-无感同步能力边界与-ios-平台限制必读)）；
+- **无感同步**：前台每 ~1.5s 轮询 `UIPasteboard.changeCount` 检测变化 → 自动 `dm_send_clipboard_text`；收到远端内容 → 自动写 `UIPasteboard`。回环抑制用文本哈希 + 120s 时间窗，避免 A→B→A 回环（见 [§10](#10-无感同步能力边界与-ios-平台限制必读)）；
 - Swift ↔ Rust 之间只有 **JSON 字符串进/出 + 两个 C 回调**；Rust 分配的字符串必须用 `dm_string_free` 释放；
 - 回调来自 Rust 后台线程，`AppModel` 统一 `Task { @MainActor in … }` 切回主线程更新 `@Published`；
 - 阻塞接口（`dm_pair_start` 最多 30s、`dm_pair_join` 最多 130s、`dm_*_json` 读磁盘）**禁止在主线程调用**，统一 `Task.detached` 执行。
@@ -43,8 +45,11 @@
 mobile/ios/
 ├── project.yml                          # XcodeGen 工程定义（不提交 .xcodeproj）
 ├── DriveSync/
-│   ├── DriveSyncApp.swift               # @main，scenePhase → 前台连接/后台断开
-│   ├── AppModel.swift                   # 状态机、FFI 调用编排、事件日志、配置持久化
+│   ├── DriveSyncApp.swift               # @main，scenePhase → 前台连接/后台断开；深色系统外观
+│   ├── AppModel.swift                   # 状态机、FFI 调用编排、事件日志、配置/引导/权限状态
+│   ├── Theme/
+│   │   ├── Theme.swift                  # PolyBot 主题：颜色/圆角/渐变/按钮样式/AppInfo 版本
+│   │   └── PolyComponents.swift         # 品牌栏/卡片/输入框/状态徽章/开关行等通用组件
 │   ├── Core/
 │   │   ├── DriveMobileBridge.swift      # C ABI 薄封装（指针/字符串所有权 + 回调入口）
 │   │   ├── RustMobileCore.swift         # Rust 门面（JSON → Swift 模型）
@@ -56,10 +61,11 @@ mobile/ios/
 │   │   ├── ConnectView.swift            # relay/token/设备名 + 连接按钮 + 身份/状态
 │   │   ├── PairingView.swift            # 发起配对（8 位码 + QR）/ 加入配对 / 设备列表
 │   │   ├── SyncView.swift               # 自动同步开关 / 手动兜底 / 接收记录 / 运行状态
+│   │   ├── OnboardingView.swift         # 首次引导 + 权限与平台说明（通知/粘贴授权/后台限制）
 │   │   ├── CatalogView.swift            # 只读软件目录
-│   │   ├── EventLogView.swift           # 最近 200 条事件日志
+│   │   ├── EventLogView.swift           # 最近 200 条事件日志（sheet）
 │   │   └── Components.swift             # 状态卡/设备行/Toast/二维码等
-│   ├── Resources/Assets.xcassets/       # AppIcon / AccentColor
+│   ├── Resources/Assets.xcassets/       # AppIcon / AccentColor(薄荷绿) / LaunchBackground(深色启动屏)
 │   ├── Info.plist
 │   └── DriveSync-Bridging-Header.h      # #import "drive_mobile.h"
 ├── ffi/
@@ -71,17 +77,53 @@ mobile/ios/
     └── gen-app-icon.py                  # 重新生成 1024×1024 App 图标（纯 Python）
 ```
 
-## 3. 环境要求
+## 3. UI 主题与首次引导（PolyBot 深色 + 薄荷绿）
+
+全 App 统一为 PolyBot 风格：深色背景 + 卡片分区 + 薄荷绿主操作色。
+主题集中在 `mobile/ios/DriveSync/Theme/Theme.swift`，通用组件在 `Theme/PolyComponents.swift`；
+页面不散落硬编码颜色（换肤只改 Theme）。
+
+| 用途 | 颜色 |
+|---|---|
+| 背景 | `#0B0F14` |
+| 卡片 | `#111820` |
+| 边框 | `#1E2A33` |
+| 主文字 | `#E6EDF3` |
+| 次要文字 | `#9CA3AF` |
+| 主色（按钮/高亮/选中） | `#22E3B0` |
+| 危险 | `#F87171` |
+
+- 圆角 10–12pt；**主按钮**为薄荷绿渐变填充 + 深色文字；**次按钮**深色底 + 细边框；危险操作为红色低透明底；
+- **输入框**深色底 + `#1E2A33` 边框，聚焦时切换薄荷绿描边（`@FocusState` 驱动）；
+- **顶部品牌栏**：圆角 logo（深绿底 + 薄荷绿描边 + 双向箭头图标）+ `drive-sync` + 版本徽章 `v<CFBundleShortVersionString>`（当前 `v0.3.0`）+ 副标题；
+- **深色状态栏/标签栏/导航栏**：`Info.plist` 强制 `UIUserInterfaceStyle = Dark`、状态栏浅色内容；`DriveSyncApp` 启动时配置 `UITabBarAppearance`/`UINavigationBarAppearance`；
+- 启动屏用 `LaunchBackground` 颜色（`#0B0F14`）避免白屏闪烁；不引入第三方 UI 库。
+
+### 3.1 首次启动引导（Onboarding）与权限状态页
+
+首次启动（`dev.drivesync.mobile.onboardingCompleted` 未置位）自动全屏展示 `Views/OnboardingView.swift`：
+
+1. 品牌欢迎 + 三步上手（连接中继 → 配对设备 → 前台无感同步）；
+2. **通知权限**：显示当前状态（未请求/已拒绝/已开启/安静通知），可一键请求或跳转系统设置；后台接收窗口内的摘要通知依赖它（前台自动同步不依赖通知）；
+3. **系统粘贴授权**：说明 iOS 16+ 首次自动读取剪贴板会弹「允许粘贴？」；该授权无法预先申请或查询，可在 设置 → drive-sync → 从其他 App 粘贴 调整；
+4. **后台限制**：iOS 不允许后台常驻连接或静默读写剪贴板；进入后台保留约 25 秒接收窗口后断开，回到前台自动重连；本轮未接入 APNs 推送；
+5. **隐私与安全**：端到端加密、access token 存 Keychain、App 日志不含剪贴板明文。
+
+「开始使用」/「稍后设置」都会持久化引导完成标记；之后可从「连接」页的
+「查看权限与平台说明」或「重新查看首次引导」随时打开同一页面（权限状态实时刷新）。
+升级自 v0.2.x 的设备会再次看到一次引导（标记为空），属预期。
+
+## 4. 环境要求
 
 | 用途 | 要求 |
 |---|---|
 | 本地构建 | macOS 13+、Xcode 15+（含 Command Line Tools）、`brew install xcodegen`、Rust stable + `rustup target add` |
-| CI | GitHub Actions `macos-15`（自带 Xcode 15.x），无需签名证书 |
+| CI | GitHub Actions `macos-15`（Xcode 16.x；XcodeGen 生成的 objectVersion 77 需要 Xcode 16 读取），无需签名证书 |
 | 最低系统 | iOS 16.0 |
 
 > 本仓库开发机是 Windows，**无法本地编译 Swift/Xcode**；Swift 代码由 CI 的 `xcodebuild` 验证。
 
-## 4. 构建（macOS 本地）
+## 5. 构建（macOS 本地）
 
 ```bash
 # 0) 仓库根目录
@@ -113,7 +155,7 @@ xcodebuild \
 # 产物：mobile/ios/build/Build/Products/Debug-iphonesimulator/DriveSync.app
 ```
 
-## 5. 安装到模拟器
+## 6. 安装到模拟器
 
 ### 方式 A：下载 CI 产物（无 Mac 开发环境也可）
 
@@ -135,13 +177,13 @@ xcrun simctl launch booted dev.drivesync.mobile
 
 > 模拟器包是 **x86_64 + arm64 模拟器 slice**（不含真机 arm64），因此**不能直接安装到 iPhone**。
 
-## 6. 安装到 iPhone（真机签名）
+## 7. 安装到 iPhone（真机签名）
 
 CI 产物只用于模拟器。真机安装需要 Apple 签名，两种路径：
 
 ### 6.1 免费 Apple ID（推荐个人测试）
 
-1. macOS 上按第 4 节构建（`build-ffi.sh` 会生成真机 arm64 的 `ffi/iphoneos/libdrive_mobile.a`）；
+1. macOS 上按第 5 节构建（`build-ffi.sh` 会生成真机 arm64 的 `ffi/iphoneos/libdrive_mobile.a`）；
 2. `xcodegen generate` 后打开 `DriveSync.xcodeproj`；
 3. 选中 **DriveSync** target → **Signing & Capabilities**：
    - 勾选 **Automatically manage signing**；
@@ -155,7 +197,7 @@ CI 产物只用于模拟器。真机安装需要 Apple 签名，两种路径：
 
 需要 Apple Developer Program（99 USD/年）与 App Store Connect 配置；本轮未提供导出存档/上传流程，且 App 使用自定义 E2E 加密，上架前需评估出口合规（`ITSAppUsesNonExemptEncryption`）与隐私标签（剪贴板内容、设备标识）。原型阶段建议只做个人/内测签名。
 
-## 7. CI（`.github/workflows/ios.yml`）
+## 8. CI（`.github/workflows/ios.yml`）
 
 **触发方式**
 
@@ -173,7 +215,7 @@ CI 产物只用于模拟器。真机安装需要 Apple 签名，两种路径：
 | `drive-mobile-ios-staticlibs` | 真机 + 模拟器 `libdrive_mobile.a` | 无 Rust 环境的 Mac 可直接放入 `mobile/ios/ffi/` 用 Xcode 签名真机 |
 | `ios-build-log`（仅失败时） | `mobile/ios/build.log` | 排查 CI 编译错误 |
 
-## 8. C ABI 契约（与 Android 共用）
+## 9. C ABI 契约（与 Android 共用）
 
 头文件：`crates/mobile-core/include/drive_mobile.h`（纯 C，`DM_ABI_VERSION = 1`）。
 Swift 通过桥接头 `#import "drive_mobile.h"`，`HEADER_SEARCH_PATHS` 指向 `crates/mobile-core/include`。
@@ -200,7 +242,7 @@ Swift 通过桥接头 `#import "drive_mobile.h"`，`HEADER_SEARCH_PATHS` 指向 
 
 > 头文件是 Android/iOS **共用契约**：如需改签名，须先与 Android 端同步并在 CI 两侧同时验证。
 
-## 9. 无感同步能力边界与 iOS 平台限制（必读）
+## 10. 无感同步能力边界与 iOS 平台限制（必读）
 
 目标：**桌面/Android 上“复制即同步”的无感体验，在 iOS 上只能做到“前台自动 + 首次授权”**。这是平台约束，不是实现取舍。
 
@@ -251,7 +293,7 @@ App 启动时若已有保存的 relay 配置，会自动连接（无需手动点
 8. **TLS**：连接走 Rust 的 WebSocket 栈（不经过 URLSession，因此不受 ATS 约束）。`ws://` 可用于开发；`wss://` 建议使用受信任证书（如 Caddy/Let's Encrypt 自动签发），自签证书默认校验失败（当前未提供“忽略证书”开关）。
 9. **剪贴板历史**：系统剪贴板可能被其他 App 覆盖，接收记录只在 App 内（最多 50 条，内存态，重启清空）。
 
-## 10. 数据与隐私
+## 11. 数据与隐私
 
 - 数据目录：`<App 沙盒>/Library/Application Support/drive-sync/`（`identity.json`、`peers.json`、`config.json`、`spool/` 等，由 Rust 侧管理）；
 - `access_token` 存 **Keychain**（`kSecAttrAccessibleAfterFirstUnlock`），relay 地址/设备名存 UserDefaults；
@@ -259,7 +301,7 @@ App 启动时若已有保存的 relay 配置，会自动连接（无需手动点
 - App 不在前台时收到内容的本地通知只展示**摘要**（单行、最多 100 字符），完整内容需打开 App 后自动写入剪贴板；可在系统设置中关闭通知；
 - 删除 App 会删除身份与配对记录，需重新配对。
 
-## 11. 故障排查
+## 12. 故障排查
 
 | 现象 | 原因/解决 |
 |---|---|
@@ -272,10 +314,14 @@ App 启动时若已有保存的 relay 配置，会自动连接（无需手动点
 | 自动同步不生效 | 确认「自动同步剪贴板（前台）」开关开启、App 在前台；iOS 16+ 需在系统弹窗允许粘贴，或到 设置 → DriveSync → 从其他 App 粘贴 改为允许 |
 | 收到内容没有自动写入剪贴板 | 「收到内容后自动写入剪贴板」被关闭；或 App 不在前台（看通知/回前台后自动写入） |
 | 通知没有出现 | 未授予通知权限（设置 → DriveSync → 通知）；前台自动写入不依赖通知 |
+| 首次引导（Onboarding）每次启动都出现 | 引导完成标记在 UserDefaults `dev.drivesync.mobile.onboardingCompleted`；清理 App 数据/重装后会再出现。升级自 v0.2.x 的设备首次出现一次属预期 |
+| 界面不是深色 / 状态栏白底黑字 | 需同时保留 `Info.plist` 的 `UIUserInterfaceStyle = Dark`、根视图 `.preferredColorScheme(.dark)`、`DriveSyncApp.configureGlobalAppearance()`（标签栏/导航栏外观）；不要把主题改为 Automatic |
+| 启动瞬间白屏 | 确认 asset catalog 中存在 `LaunchBackground` 颜色，且 `Info.plist` 的 `UILaunchScreen.UIColorName` 指向它（`#0B0F14`） |
+| 品牌栏版本徽章不是 v0.3.0 | 版本取自 `CFBundleShortVersionString`（`project.yml` 的 `MARKETING_VERSION`）；改版本后需 `xcodegen generate` + 重新构建 |
 | 沙盒里没有 `drive-sync` 目录 | 首次启动 `dm_init` 才创建；检查 `AppModel.bootstrap()` 日志 |
 | Xcode 签名报 bundle id 冲突 | 免费账号必须用自己的唯一 bundle id |
 
-## 12. 后续工作（v0.3+）
+## 13. 后续工作（v0.4+）
 
 - APNs（alert/background push）+ 拉取 → 解密 → 本地通知 → 用户点通知打开 App 复制（对应 [platform-mobile.md](platform-mobile.md) §3.2/§4.1）；
 - `UIPasteControl` 免弹窗粘贴按钮；Share Extension「分享到 drive-sync」；

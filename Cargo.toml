@@ -8,10 +8,11 @@ members = [
     "crates/e2e-tests",
     "crates/mobile-core",
     "crates/updater",
+    "crates/gui",
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.80"

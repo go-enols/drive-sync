@@ -1,4 +1,93 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DriveSync" parent="Theme.Material3.DayNight.NoActionBar" />
+    <style name="Theme.DriveSync" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- PolyBot 深色 + 薄荷绿 -->
+        <item name="colorPrimary">@color/mint</item>
+        <item name="colorOnPrimary">@color/mint_on</item>
+        <item name="colorPrimaryContainer">@color/card</item>
+        <item name="colorOnPrimaryContainer">@color/mint</item>
+        <item name="colorSecondary">@color/mint</item>
+        <item name="colorOnSecondary">@color/mint_on</item>
+        <item name="colorSurface">@color/card</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorSurfaceVariant">@color/card_alt</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+        <item name="colorOutline">@color/border</item>
+        <item name="colorOutlineVariant">@color/border</item>
+        <item name="colorError">@color/danger</item>
+        <item name="colorOnError">@color/mint_on</item>
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <!-- 透明页面：通知 Action / 悬浮球读取剪贴板（extends framework Activity） -->
+    <style name="Theme.DriveSync.Transparent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowIsTranslucent">true</item>
+    </style>
+
+    <style name="Text.DriveSync.Section" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="Text.DriveSync.Label" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="Text.DriveSync.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="Text.DriveSync.Mono" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="Text.DriveSync.Mint" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">@color/mint</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="Widget.DriveSync.Button.Primary" parent="Widget.Material3.Button">
+        <item name="backgroundTint">@color/mint</item>
+        <item name="android:textColor">@color/mint_on</item>
+        <item name="android:textStyle">bold</item>
+        <item name="cornerRadius">10dp</item>
+    </style>
+
+    <style name="Widget.DriveSync.Button.Secondary" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="strokeColor">@color/border</item>
+        <item name="cornerRadius">10dp</item>
+    </style>
+
+    <style name="Widget.DriveSync.Button.Danger" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textColor">@color/danger</item>
+        <item name="strokeColor">@color/danger</item>
+        <item name="cornerRadius">10dp</item>
+    </style>
+
+    <style name="Widget.DriveSync.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">@color/input_bg</item>
+        <item name="boxStrokeColor">@color/input_stroke</item>
+        <item name="boxStrokeWidth">1dp</item>
+        <item name="boxStrokeWidthFocused">1dp</item>
+        <item name="hintTextColor">@color/text_secondary</item>
+        <item name="boxCornerRadiusTopStart">10dp</item>
+        <item name="boxCornerRadiusTopEnd">10dp</item>
+        <item name="boxCornerRadiusBottomStart">10dp</item>
+        <item name="boxCornerRadiusBottomEnd">10dp</item>
+    </style>
 </resources>

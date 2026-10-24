@@ -8,10 +8,11 @@ import android.os.Looper
 /**
  * 剪切板自动同步（轮询 + 哈希去重 + 回环抑制）。
  *
- * - App 在前台时（进程有可见 Activity）：Android 10+ 允许读取剪贴板，自动发送；
- * - App 退到后台：若侧载测试时用 `adb shell appops set dev.drivesync.mobile READ_CLIPBOARD allow`
- *   授权（见 docs/mobile-android.md），前台服务里的轮询仍能读到并自动发送，实现接近桌面端的无感；
- * - 未授权时后台读取返回空，自动降级为“仅前台自动”，不会报错。
+ * Android 10+ 只允许“有前台焦点的应用”读取剪贴板，因此：
+ * - App 在前台/有可见界面时：自动轮询并发送（真正无感）；
+ * - App 在后台时：系统会返回空剪贴板（普通权限无法绕过，也无需 AdB/appops）——
+ *   发送走“一键”通道：通知栏 Action 或悬浮同步球 → [ClipboardQuickActivity]
+ *   取得焦点后读取并发送；接收方向仍然完全自动（写剪贴板 + 通知）。
  */
 object ClipboardSync {
     private const val POLL_INTERVAL_MS = 900L
@@ -37,7 +38,7 @@ object ClipboardSync {
         }
     }
 
-    /** 开始轮询（幂等；连接成功后调用）。 */
+    /** 开始轮询（幂等；连接成功/服务启动后调用）。 */
     fun ensureStarted() {
         if (watching) return
         watching = true
@@ -73,10 +74,12 @@ object ClipboardSync {
         if (hash == lastSeenHash) return
         lastSeenHash = hash
         if (AppState.isRemoteEcho(hash)) return
+        // 手动一键同步过的内容（后台时）不再重复发送一次。
+        if (AppState.isSameAsLastSent(hash)) return
 
         val result = Native.dmSendClipboardText(handle, text)
         if (result == 0) {
-            AppState.markLocalSent(text)
+            AppState.markSent(text)
         } else if (result != -3) {
             AppState.lastError = Native.dmLastError() ?: "发送剪切板失败（code=$result）"
         }

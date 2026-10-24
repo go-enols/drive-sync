@@ -6,11 +6,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- 可选权限（App 内引导申请，无需 adb/root） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
+        android:name=".DriveSyncApp"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.DriveSync">
+        android:theme="@style/Theme.DriveSync"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"
@@ -23,11 +30,37 @@
             </intent-filter>
         </activity>
 
+        <!-- 权限状态 / 引导页（全部在 App 内申请，无 adb 步骤） -->
+        <activity
+            android:name=".PermissionsActivity"
+            android:exported="false"
+            android:label="权限与后台同步" />
+
+        <!-- 透明“一键同步”页：通知 Action / 悬浮球拉起，取得焦点后读取剪贴板 -->
+        <activity
+            android:name=".ClipboardQuickActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.DriveSync.Transparent" />
+
         <!-- 后台保持同步 + 轮询剪贴板（targetSdk 36 需声明 dataSync 类型） -->
         <service
             android:name=".SyncService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- 可选开机自启（Android 14/15 对 BOOT_COMPLETED 启动 dataSync 服务有限制，失败会提示） -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -1,4 +1,4 @@
-# drive-sync Release：多平台构建 + （可选）签名更新清单 + GitHub Release
+﻿# drive-sync Release：多平台构建 + （可选）签名更新清单 + GitHub Release
 #
 # 触发：
 # - push tag `v*`（如 v0.3.0）：构建 4 平台产物，生成 latest.json（有 Secret 则签名），
@@ -138,7 +138,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libwayland-dev
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
 
       - name: Install Rust toolchain
         shell: bash
@@ -155,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           # 发布产物启用 tls feature（可连 wss:// 中继）。
-          cargo build --release --locked -p drive-cli -p drive-relay -p drive-updater --bins \
+          cargo build --release --locked -p drive-cli -p drive-relay -p drive-updater -p drive-gui --bins \
             --features drive-cli/tls
 
       - name: Package archive + raw binary + asset JSON
@@ -175,6 +175,16 @@ jobs:
 
           cp "target/release/drive-sync${BIN_EXT}" "$PKG/"
           cp "target/release/drive-relay${BIN_EXT}" "$PKG/"
+          [[ -f "target/release/drive-sync-gui${BIN_EXT}" ]] && cp "target/release/drive-sync-gui${BIN_EXT}" "$PKG/"
+
+          # macOS: 组装 DriveSync.app（无需签名，用户首次打开需右键 Open）
+          if [[ "$(uname -s)" == "Darwin" && -f "crates/gui/packaging/Info.plist" ]]; then
+            APP="$PKG/DriveSync.app"
+            mkdir -p "$APP/Contents/MacOS"
+            cp "target/release/drive-sync-gui" "$APP/Contents/MacOS/drive-sync-gui"
+            sed "s/__VERSION__/${VERSION}/g" crates/gui/packaging/Info.plist > "$APP/Contents/Info.plist"
+            chmod +x "$APP/Contents/MacOS/drive-sync-gui"
+          fi
           [[ -f README.md ]] && cp README.md "$PKG/" || true
           [[ -f LICENSE ]] && cp LICENSE "$PKG/" || true
           [[ -f LICENSE-MIT ]] && cp LICENSE-MIT "$PKG/" || true

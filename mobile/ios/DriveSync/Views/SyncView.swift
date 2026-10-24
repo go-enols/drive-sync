@@ -2,39 +2,46 @@
 //  SyncView.swift
 //  drive-sync iOS
 //
-//  运行页：自动同步开关 / 手动兜底发送 / 接收记录 / 运行状态。
+//  同步页（PolyBot 深色主题）：自动同步开关 / 手动兜底发送 / 接收记录 / 运行信息 / 事件日志。
 //  iOS 平台现实（详见 docs/mobile-ios.md §9）：
-//   - 读剪贴板无法后台进行：仅前台自动轮询 + iOS 16+ 首次系统粘贴授权；
-//   - 收到内容在前台自动写入剪贴板；后台约 25 秒窗口内收到会发本地通知；
-//   - 无 APNs 推送，App 长时间不在前台时收不到内容。
+//   - 读剪贴板仅前台自动（changeCount 轮询），iOS 16+ 首次需系统粘贴授权；
+//   - 收到内容前台自动写入剪贴板；后台约 25 秒窗口内收到会发本地通知；
+//   - 无 APNs 推送，长时间不在前台时收不到内容。
 //
 
 import SwiftUI
 
 struct SyncView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var showLogs = false
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    ConnectionStatusCard()
+        PolyScreen {
+            BrandHeader()
 
-                    if !model.core.isRunning {
-                        Text("未启动同步：到「连接」页保存配置并连接中继。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+            ConnectionStatusCard()
 
-                    Toggle(
-                        "自动同步剪贴板（前台）",
+            // MARK: 自动同步
+            PolyCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    CardTitle(icon: "bolt.fill", title: "自动同步")
+
+                    PolyToggleRow(
+                        icon: "arrow.up.doc",
+                        title: "自动同步剪贴板（前台）",
+                        subtitle: "前台每 1.5 秒检测剪贴板变化并自动发送",
                         isOn: Binding(
                             get: { model.autoSyncEnabled },
                             set: { model.setAutoSyncEnabled($0) }
                         )
                     )
-                    Toggle(
-                        "收到内容后自动写入剪贴板",
+
+                    PolyDivider()
+
+                    PolyToggleRow(
+                        icon: "arrow.down.doc",
+                        title: "收到内容后自动写入剪贴板",
+                        subtitle: "收到其他设备内容后立即写入系统剪贴板",
                         isOn: Binding(
                             get: { model.autoApplyReceivedEnabled },
                             set: { model.setAutoApplyReceivedEnabled($0) }
@@ -42,109 +49,131 @@ struct SyncView: View {
                     )
 
                     if model.autoReadBlocked {
-                        Label(
-                            "自动读取被系统粘贴授权拦截：可点下面按钮手动发送一次，或到 设置 → DriveSync → 从其他 App 粘贴 改为允许。",
-                            systemImage: "exclamationmark.triangle"
+                        EmptyHint(
+                            icon: "exclamationmark.triangle",
+                            text: "自动读取被系统粘贴授权拦截：可点下方「发送当前剪贴板」手动兜底，或到 设置 → drive-sync → 从其他 App 粘贴 改为允许。"
                         )
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
                     }
+
+                    Text("iOS 16+ 首次读取剪贴板会弹系统「允许粘贴？」；拒绝后自动同步会退避，可用手动按钮兜底。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            // MARK: 手动发送
+            PolyCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    CardTitle(icon: "paperplane.fill", title: "发送（本机 → 其他设备）")
+                    Text("自动同步未生效或读取被拦截时，点按按钮显式读取当前剪贴板并发送。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     Button {
                         model.sendCurrentClipboard()
                     } label: {
-                        Label("发送当前剪贴板（手动兜底）", systemImage: "paperclip")
-                            .frame(maxWidth: .infinity)
+                        Label("发送当前剪贴板", systemImage: "paperclip")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PolyPrimaryButtonStyle())
                     .disabled(!model.core.isRunning)
+                    .opacity(model.core.isRunning ? 1.0 : 0.5)
 
                     if !model.clipboardPreview.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 6) {
                             Text("最近发送的预览")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.textTertiary)
                             Text(model.clipboardPreview)
-                                .font(.caption.monospaced())
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(Theme.textPrimary)
                                 .lineLimit(4)
                                 .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Theme.background)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Theme.border, lineWidth: 1)
+                                )
                         }
                     }
-                } header: {
-                    Text("自动同步 / 发送（本机 → 其他设备）")
-                } footer: {
-                    Text("前台时每 1.5 秒检测一次剪贴板变化并自动发送。iOS 16+ 首次读取需在系统弹窗里允许粘贴（可到 设置 → DriveSync → 从其他 App 粘贴 改为始终允许）；App 在后台/未运行时无法读取剪贴板，这是 iOS 系统限制。仅支持文本。")
                 }
+            }
 
-                Section {
-                    if model.receivedItems.isEmpty {
-                        Text("暂无接收记录。前台收到其他设备的剪贴板文本会自动写入系统剪贴板，并在这里保留一条记录。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(model.receivedItems) { item in
-                            ReceivedRow(item: item)
-                        }
-                    }
-                } header: {
+            // MARK: 接收记录
+            PolyCard {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text("接收（其他设备 → 本机）")
-                        Spacer()
+                        CardTitle(icon: "tray.and.arrow.down", title: "接收记录（\(model.receivedItems.count)）")
+                        Spacer(minLength: 8)
                         if !model.receivedItems.isEmpty {
                             Button("清空") {
                                 model.clearReceivedItems()
                             }
-                            .font(.caption)
+                            .buttonStyle(PolyLinkButtonStyle())
                         }
                     }
-                } footer: {
-                    Text("前台收到内容会立刻自动写入系统剪贴板，直接切换目标 App 粘贴即可；关闭自动写入时请点「复制到剪贴板」。后台接收窗口（约 25 秒）内收到会发本地通知，打开 App 后自动写入；没有 APNs 推送，长时间不在前台的内容不会被接收。")
-                }
 
-                Section {
-                    LabeledContent("中继") {
-                        Text(model.status.relayURL.isEmpty ? (model.relayURL.isBlank ? "-" : model.relayURL) : model.status.relayURL)
-                            .font(.caption.monospaced())
-                    }
-                    LabeledContent("在线设备") {
-                        Text("\(model.status.peersOnline)")
-                    }
-                    LabeledContent("已配对设备") {
-                        Text("\(model.peers.count)")
-                    }
-                    LabeledContent("最近写入剪贴板") {
-                        Text(model.lastAppliedAt.map { TimeFormat.dateTime.string(from: $0) } ?? "-")
-                    }
-                    LabeledContent("设备 ID") {
-                        Text(model.identity?.deviceId ?? "-")
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                    }
-                    NavigationLink {
-                        EventLogView()
-                    } label: {
-                        HStack {
-                            Text("事件日志")
-                            Spacer()
-                            Text("\(model.logs.count) 条")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    if model.receivedItems.isEmpty {
+                        EmptyHint(icon: "tray", text: "暂无接收记录。前台收到内容会自动写入剪贴板，并在这里保留一条记录。")
+                    } else {
+                        ForEach(model.receivedItems) { item in
+                            ReceivedRow(item: item)
+                            if item.id != model.receivedItems.last?.id {
+                                PolyDivider()
+                            }
                         }
                     }
-                } header: {
-                    Text("运行状态")
-                }
-
-                Section {
-                    Button {
-                        Task { await model.refreshLiveData() }
-                    } label: {
-                        Label("刷新状态与设备列表", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(!model.core.isRunning)
                 }
             }
-            .navigationTitle("同步")
+
+            // MARK: 运行信息
+            PolyCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    CardTitle(icon: "waveform.path.ecg", title: "运行信息")
+                    InfoRow(label: "中继", value: relayDisplay)
+                    PolyDivider()
+                    InfoRow(label: "在线设备", value: "\(model.status.peersOnline)")
+                    PolyDivider()
+                    InfoRow(label: "已配对设备", value: "\(model.peers.count)")
+                    PolyDivider()
+                    InfoRow(
+                        label: "最近写入剪贴板",
+                        value: model.lastAppliedAt.map { TimeFormat.dateTime.string(from: $0) } ?? "-"
+                    )
+                    PolyDivider()
+                    InfoColumn(label: "设备 ID", value: model.identity?.deviceId ?? "-", mono: true)
+
+                    Button {
+                        showLogs = true
+                    } label: {
+                        Label("查看事件日志（\(model.logs.count)）", systemImage: "list.bullet.rectangle")
+                    }
+                    .buttonStyle(PolySecondaryButtonStyle())
+                }
+            }
+
+            Text("没有 APNs 推送：App 长时间不在前台时收不到内容；回到前台会自动重连并恢复同步。")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 4)
         }
+        .sheet(isPresented: $showLogs) {
+            EventLogView()
+                .environmentObject(model)
+        }
+    }
+
+    private var relayDisplay: String {
+        if !model.status.relayURL.isEmpty {
+            return model.status.relayURL
+        }
+        return model.relayURL.isBlank ? "-" : model.relayURL
     }
 }

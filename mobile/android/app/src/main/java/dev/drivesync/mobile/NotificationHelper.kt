@@ -6,13 +6,23 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
-/** 通知：前台服务常驻状态 + 收到远端剪切板提醒（不展示内容明文）。 */
+/**
+ * 通知：前台服务常驻状态 + 收到远端剪切板提醒。
+ *
+ * PolyBot 风格：薄荷绿强调色 + 深色图标；常驻通知带“同步当前剪贴板”一键 Action
+ * （后台无法自动读剪贴板时的官方替代方案，无需 adb/appops）。
+ */
 object NotificationHelper {
     const val CHANNEL_STATUS = "drive_sync_status"
     const val CHANNEL_CLIPBOARD = "drive_sync_clipboard"
     const val SERVICE_NOTIFICATION_ID = 1001
     const val CLIPBOARD_NOTIFICATION_ID = 1002
+
+    private const val REQUEST_OPEN_APP = 1
+    private const val REQUEST_QUICK_SYNC = 2
 
     fun ensureChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -21,7 +31,7 @@ object NotificationHelper {
             "同步状态",
             NotificationManager.IMPORTANCE_LOW,
         )
-        status.description = "drive-sync 前台同步服务状态"
+        status.description = "drive-sync 前台同步服务状态（含一键同步 Action）"
         manager.createNotificationChannel(status)
 
         val clipboard = NotificationChannel(
@@ -33,33 +43,60 @@ object NotificationHelper {
         manager.createNotificationChannel(clipboard)
     }
 
-    fun serviceNotification(context: Context, text: String): Notification {
-        ensureChannels(context)
+    private fun accent(context: Context): Int = ContextCompat.getColor(context, R.color.mint)
+
+    private fun openAppIntent(context: Context): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
-        val pending = PendingIntent.getActivity(
+        return PendingIntent.getActivity(
             context,
-            0,
+            REQUEST_OPEN_APP,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        return Notification.Builder(context, CHANNEL_STATUS)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("drive-sync 正在同步")
+    }
+
+    private fun quickSyncIntent(context: Context): PendingIntent {
+        val intent = Intent(context, ClipboardQuickActivity::class.java)
+        return PendingIntent.getActivity(
+            context,
+            REQUEST_QUICK_SYNC,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
+    /** 前台服务常驻通知（含一键同步 Action）。 */
+    fun serviceNotification(context: Context, text: String): Notification {
+        ensureChannels(context)
+        return NotificationCompat.Builder(context, CHANNEL_STATUS)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(accent(context))
+            .setContentTitle("drive-sync")
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
-            .setContentIntent(pending)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setContentIntent(openAppIntent(context))
+            .addAction(0, "同步当前剪贴板", quickSyncIntent(context))
             .build()
     }
 
+    /** 收到远端剪切板提醒（自动写入系统剪贴板后）。 */
     fun notifyClipboard(context: Context, fromDeviceId: String) {
         ensureChannels(context)
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val from = if (fromDeviceId.isBlank()) "远端设备" else fromDeviceId
-        val notification = Notification.Builder(context, CHANNEL_CLIPBOARD)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+        val notification = NotificationCompat.Builder(context, CHANNEL_CLIPBOARD)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(accent(context))
             .setContentTitle("收到远端剪切板")
             .setContentText("已自动写入本机剪贴板（来自 $from）")
             .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(openAppIntent(context))
+            .addAction(0, "同步当前剪贴板", quickSyncIntent(context))
             .build()
         try {
             manager.notify(CLIPBOARD_NOTIFICATION_ID, notification)
@@ -79,5 +116,24 @@ object NotificationHelper {
 
     fun notifyServiceTimeout(context: Context) {
         updateServiceNotification(context, "后台同步已达系统时长上限，重新打开 App 可继续")
+    }
+
+    /** 开机自启失败（Android 14/15 限制）时的提示。 */
+    fun notifyBootFallback(context: Context) {
+        ensureChannels(context)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val notification = NotificationCompat.Builder(context, CHANNEL_CLIPBOARD)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(accent(context))
+            .setContentTitle("后台同步未自动恢复")
+            .setContentText("系统限制了开机启动前台服务，点按打开 drive-sync 继续同步")
+            .setAutoCancel(true)
+            .setContentIntent(openAppIntent(context))
+            .build()
+        try {
+            manager.notify(CLIPBOARD_NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {
+            // 忽略
+        }
     }
 }

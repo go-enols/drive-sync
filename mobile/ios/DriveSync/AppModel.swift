@@ -5,17 +5,17 @@
 //  界面状态机：持有 RustMobileCore，把所有阻塞 C ABI 调用放到后台线程，
 //  把 Rust 回调切回主线程后再更新 @Published 状态。
 //
-//  iOS 平台现实（产品行为）：
-//    - 只有 App 在前台时保持 WebSocket（进入后台主动 dm_stop，回到前台重连）；
-//    - 发送剪贴板必须由用户点按（系统会弹「允许粘贴」隐私提示）；
-//    - 收到远端内容只进列表，必须用户确认后才写入系统剪贴板；
-//    - 推送未实现（无 APNs），因此接收只在前台连接期间发生。
+//  iOS 平台现实（产品行为，详见 docs/mobile-ios.md §9）：
+//    - 前台无感同步：轮询剪贴板自动发送、收到内容自动写剪贴板；
+//    - 只有前台保持 WebSocket，后台保留约 25 秒接收窗口后断开（无 APNs 推送）；
+//    - iOS 16+ 首次读取剪贴板需系统「允许粘贴」授权，无法预授权/查询。
 //
 
 import Combine
 import Foundation
 import SwiftUI
 import UIKit
+import UserNotifications
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -63,12 +63,50 @@ final class AppModel: ObservableObject {
 
         var color: Color {
             switch self {
-            case .uninitialized: return .secondary
-            case .offline: return .orange
-            case .connecting: return .blue
-            case .online: return .green
-            case .paused: return .purple
-            case .failed: return .red
+            case .uninitialized: return Theme.textTertiary
+            case .offline: return Theme.warning
+            case .connecting: return Theme.mint
+            case .online: return Theme.mint
+            case .paused: return Theme.textSecondary
+            case .failed: return Theme.danger
+            }
+        }
+    }
+
+    /// 通知权限状态（Onboarding / 权限页展示）。
+    enum NotificationPermissionState: Equatable {
+        case notDetermined
+        case denied
+        case authorized
+        case provisional
+        case unknown
+
+        var title: String {
+            switch self {
+            case .notDetermined: return "未请求"
+            case .denied: return "已拒绝"
+            case .authorized: return "已开启"
+            case .provisional: return "安静通知"
+            case .unknown: return "未知"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .notDetermined: return Theme.textSecondary
+            case .denied: return Theme.danger
+            case .authorized: return Theme.mint
+            case .provisional: return Theme.mint
+            case .unknown: return Theme.textTertiary
+            }
+        }
+
+        /// 需要展示的操作按钮文字（nil 表示无需操作）。
+        var actionTitle: String? {
+            switch self {
+            case .notDetermined: return "请求通知权限"
+            case .denied: return "去系统设置"
+            default: return nil
             }
         }
     }
@@ -110,6 +148,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var autoReadBlocked = false
     @Published var toast: Toast?
     @Published var errorText: String?
+
+    // MARK: - 首次引导 / 权限
+
+    /// 是否展示首次引导（Onboarding）；也用于「权限与平台说明」入口。
+    @Published var showOnboarding = false
+    /// 是否已完成首次引导（持久化到 UserDefaults，之后不再自动弹出）。
+    @Published private(set) var onboardingCompleted = false
+    /// 通知权限状态（Onboarding / 权限页展示）。
+    @Published private(set) var notificationPermission: NotificationPermissionState = .unknown
 
     // MARK: - 内部状态
 
@@ -187,9 +234,14 @@ final class AppModel: ObservableObject {
         }
 
         isAppActive = true
-        ClipboardNotifier.requestAuthorization()
         lastObservedChangeCount = -1
         appendLog("前台自动同步已启用：剪贴板变化自动发送、收到内容自动写入剪贴板（iOS 首次读取需系统粘贴授权）。", level: .info)
+        await refreshNotificationPermission()
+
+        // 首次启动（或未完成引导）时展示 Onboarding / 权限说明。
+        if !onboardingCompleted {
+            showOnboarding = true
+        }
 
         // 已有保存的配置时自动连接，减少手动步骤（无感体验的一部分）。
         if identity != nil && !relayURL.trimmed.isEmpty && !core.isRunning && !connecting {
@@ -212,6 +264,76 @@ final class AppModel: ObservableObject {
         case .failure(let error):
             errorText = error.localizedDescription
             appendLog("初始化设备身份失败：\(error.localizedDescription)", level: .failure)
+        }
+    }
+
+    // MARK: - 首次引导 / 权限
+
+    /// 打开首次引导 / 权限说明页。
+    func presentOnboarding() {
+        showOnboarding = true
+    }
+
+    /// 完成首次引导（持久化，之后不再自动弹出）。
+    func completeOnboarding() {
+        onboardingCompleted = true
+        UserDefaults.standard.set(true, forKey: DefaultsKey.onboardingCompleted)
+        showOnboarding = false
+        appendLog("已完成首次引导与权限说明", level: .info)
+    }
+
+    /// 刷新通知权限状态（系统设置可能被用户修改）。
+    func refreshNotificationPermission() async {
+        let status = await withCheckedContinuation { (continuation: CheckedContinuation<UNAuthorizationStatus, Never>) in
+            ClipboardNotifier.authorizationStatus { current in
+                continuation.resume(returning: current)
+            }
+        }
+        notificationPermission = Self.mapNotificationPermission(status)
+    }
+
+    /// 请求通知权限。
+    func requestNotificationPermission() async {
+        let granted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            ClipboardNotifier.requestAuthorization { result in
+                continuation.resume(returning: result)
+            }
+        }
+        await refreshNotificationPermission()
+        appendLog(
+            granted
+                ? "通知权限已开启：后台接收窗口内收到内容会弹本地通知"
+                : "通知权限未开启：前台自动同步不受影响，可随时到系统设置开启",
+            level: granted ? .success : .warning
+        )
+    }
+
+    /// 权限页操作按钮：未请求 → 请求权限；已拒绝 → 去系统设置。
+    func handleNotificationPermissionAction() async {
+        switch notificationPermission {
+        case .notDetermined:
+            await requestNotificationPermission()
+        case .denied:
+            openSystemSettings()
+        default:
+            break
+        }
+    }
+
+    /// 打开本 App 的系统设置页（粘贴授权 / 通知权限都在这里调整）。
+    func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    private static func mapNotificationPermission(_ status: UNAuthorizationStatus) -> NotificationPermissionState {
+        switch status {
+        case .notDetermined: return .notDetermined
+        case .denied: return .denied
+        case .authorized: return .authorized
+        case .provisional: return .provisional
+        case .ephemeral: return .authorized
+        @unknown default: return .unknown
         }
     }
 
@@ -809,6 +931,7 @@ final class AppModel: ObservableObject {
         accessToken = KeychainStore.loadToken() ?? ""
         autoSyncEnabled = defaults.object(forKey: DefaultsKey.autoSyncEnabled) as? Bool ?? true
         autoApplyReceivedEnabled = defaults.object(forKey: DefaultsKey.autoApplyReceived) as? Bool ?? true
+        onboardingCompleted = defaults.bool(forKey: DefaultsKey.onboardingCompleted)
     }
 
     private func persistSettings() {
@@ -845,6 +968,7 @@ private enum DefaultsKey {
     static let deviceName = "dev.drivesync.mobile.deviceName"
     static let autoSyncEnabled = "dev.drivesync.mobile.autoSyncEnabled"
     static let autoApplyReceived = "dev.drivesync.mobile.autoApplyReceived"
+    static let onboardingCompleted = "dev.drivesync.mobile.onboardingCompleted"
 }
 
 extension String {

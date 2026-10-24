@@ -2,7 +2,8 @@
 //  Components.swift
 //  drive-sync iOS
 //
-//  跨页面复用的小组件：状态卡、设备行、接收记录行、Toast、二维码、目录行。
+//  PolyBot 主题下的业务组件：连接状态卡、设备行、接收记录行、Toast、二维码、目录行。
+//  基础样式（颜色/卡片/输入框）在 Theme/ 下，这里只组合业务展示。
 //
 
 import CoreImage
@@ -14,10 +15,10 @@ import UIKit
 extension LogLine.Level {
     var color: Color {
         switch self {
-        case .info: return .secondary
-        case .success: return .green
-        case .warning: return .orange
-        case .failure: return .red
+        case .info: return Theme.textSecondary
+        case .success: return Theme.mint
+        case .warning: return Theme.warning
+        case .failure: return Theme.danger
         }
     }
 
@@ -55,29 +56,25 @@ struct ConnectionStatusCard: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Circle()
-                .fill(model.phase.color)
-                .frame(width: 12, height: 12)
-                .padding(.top, 6)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(model.phase.title)
-                    .font(.headline)
+        PolyCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    CardTitle(icon: "antenna.radiowaves.left.and.right", title: "连接状态")
+                    Spacer(minLength: 8)
+                    StatusPill(text: model.phase.title, color: model.phase.color)
+                }
                 Text(model.phase.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if model.phase.isOnline {
-                    Text("在线设备 \(model.status.peersOnline) · 已配对 \(model.peers.count)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        MetricTile(value: "\(model.status.peersOnline)", label: "在线设备")
+                        MetricTile(value: "\(model.peers.count)", label: "已配对")
+                    }
                 }
             }
-            Spacer()
-            if model.connecting || model.pairingBusy {
-                ProgressView()
-            }
         }
-        .padding(.vertical, 2)
     }
 }
 
@@ -87,25 +84,33 @@ struct PeerRow: View {
     let peer: PeerInfo
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(peer.isOnline ? Color.green : Color.secondary.opacity(0.35))
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(peer.displayName)
-                    .font(.body.weight(.medium))
-                Text(peer.deviceId)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Theme.mint.opacity(peer.isOnline ? 0.16 : 0.06))
+                    .frame(width: 36, height: 36)
+                Image(systemName: "iphone")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(peer.isOnline ? Theme.mint : Theme.textTertiary)
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(peer.sessionActive ? "加密会话" : (peer.isOnline ? "在线" : "离线"))
-                    .font(.caption2)
-                    .foregroundStyle(peer.sessionActive ? Color.green : Color.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(peer.displayName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(peer.deviceId)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 4) {
+                StatusPill(
+                    text: peer.sessionActive ? "加密会话" : (peer.isOnline ? "在线" : "离线"),
+                    color: peer.isOnline ? Theme.mint : Theme.textTertiary
+                )
                 Text("配对于 \(peer.pairedAtText)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textTertiary)
             }
         }
         .padding(.vertical, 2)
@@ -119,35 +124,49 @@ struct ReceivedRow: View {
     let item: ReceivedItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.left.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.mint)
                 Text(item.peerName)
-                    .font(.body.weight(.medium))
-                Spacer()
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 8)
                 Text(TimeFormat.time.string(from: item.receivedAt))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
             }
+
             Text(item.text)
-                .font(.caption.monospaced())
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.textPrimary)
                 .lineLimit(6)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.background)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Theme.border, lineWidth: 1)
+                )
+
             HStack {
                 Button {
                     model.copyToPasteboard(text: item.text)
                 } label: {
                     Label("复制到剪贴板", systemImage: "doc.on.doc")
-                        .font(.caption.weight(.medium))
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(PolyLinkButtonStyle())
 
                 Spacer()
 
                 Text("\(item.characterCount) 字符")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textTertiary)
             }
         }
         .padding(.vertical, 2)
@@ -162,17 +181,26 @@ struct ToastView: View {
     var body: some View {
         VStack {
             if let toast = model.toast {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Image(systemName: toast.level.icon)
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(toast.level.color)
                     Text(toast.text)
-                        .font(.footnote.weight(.medium))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.leading)
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+                .padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.cornerSmall, style: .continuous)
+                        .fill(Theme.cardElevated)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cornerSmall, style: .continuous)
+                        .strokeBorder(Theme.border, lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.35), radius: 12, x: 0, y: 4)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .onTapGesture {
@@ -198,11 +226,16 @@ struct QRCodeView: View {
                     .interpolation(.none)
                     .resizable()
                     .scaledToFit()
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white)
+                    )
                     .accessibilityLabel("配对二维码")
             } else {
                 Text("二维码生成失败")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
             }
         }
     }
@@ -234,18 +267,14 @@ struct CatalogRow: View {
     let entry: CatalogItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(entry.displayName)
-                    .font(.body.weight(.medium))
-                Spacer()
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 6)
                 if entry.isLocal {
-                    Text("本机持有")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.green.opacity(0.15), in: Capsule())
-                        .foregroundStyle(.green)
+                    StatusPill(text: "本机持有", color: Theme.mint)
                 }
             }
             HStack(spacing: 10) {
@@ -255,16 +284,16 @@ struct CatalogRow: View {
                 Text(entry.platformText)
                 Text(entry.displaySize)
                 if entry.holderCount > 0 {
-                    Text("\(entry.holderCount) 台设备持有")
+                    Text("\(entry.holderCount) 台持有")
                 }
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textSecondary)
 
             if let notes = entry.notes, !notes.isEmpty {
                 Text(notes)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
                     .lineLimit(2)
             }
         }

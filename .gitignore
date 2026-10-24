@@ -14,3 +14,5 @@ Cargo.lock.bak
 *.signing-key.local
 # 中继控制面状态（撤销信箱）
 /drive-relay-state
+# CI 生成的 Inno Setup 脚本
+/deploy/windows/*.generated.iss

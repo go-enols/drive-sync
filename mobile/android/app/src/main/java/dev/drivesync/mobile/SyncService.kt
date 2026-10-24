@@ -12,7 +12,7 @@ import org.json.JSONObject
  * 前台服务：保持连接与后台接收（收到远端内容自动写剪贴板 + 通知）。
  *
  * - targetSdk 36 声明 `foregroundServiceType="dataSync"`；
- * - 通知常驻“同步当前剪贴板”Action：后台无法自动读剪贴板时的官方一键方案（无需 adb）；
+ * - 通知常驻“同步当前剪贴板”Action：后台无法自动读剪贴板时的一键方案；
  * - Android 15（API 35）+ 对 dataSync 类型前台服务有 24 小时内累计 6 小时限制，
  *   超时回调 [onTimeout]；重新打开 App 可继续；
  * - 若进程被系统重建，服务会用本地保存的配置自动恢复原生运行时。

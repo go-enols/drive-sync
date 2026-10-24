@@ -18,6 +18,28 @@ object SyncLauncher {
     const val KEY_FLOATING_BALL = "floating_ball"
     const val KEY_BOOT_AUTOSTART = "boot_autostart"
     const val KEY_ONBOARDING_DONE = "onboarding_done"
+    const val KEY_AUTO_START = "auto_start_sync"
+
+    /** 是否允许“打开应用时自动开始同步”（默认开启）。 */
+    fun isAutoStartEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AUTO_START, true)
+
+    fun setAutoStartEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AUTO_START, enabled)
+            .apply()
+    }
+
+    /** relay/token 是否已保存且格式可用（用于判断“已完成首次配置，可自动连接”）。 */
+    fun hasCompleteConfig(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val relay = prefs.getString(KEY_RELAY, "").orEmpty().trim()
+        val token = prefs.getString(KEY_TOKEN, "").orEmpty().trim()
+        return token.isNotEmpty() &&
+            (relay.startsWith("ws://") || relay.startsWith("wss://"))
+    }
 
     /** 确保原生运行时已启动；返回 "ok" 表示成功，否则返回可展示的错误文案。 */
     @Synchronized

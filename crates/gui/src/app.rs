@@ -274,6 +274,14 @@ pub struct GuiApp {
     system_light: Option<bool>,
     applied_light: bool,
     last_system_probe: Instant,
+
+    /// 启动与窗口行为（gui.json）。
+    auto_start_sync: bool,
+    hide_to_tray: bool,
+    tray: Option<crate::tray::Tray>,
+    tray_hwnd: std::sync::Arc<std::sync::atomic::AtomicIsize>,
+    quitting: bool,
+    was_minimized: bool,
 }
 
 impl GuiApp {
@@ -316,7 +324,8 @@ impl GuiApp {
         }
 
         // 外观主题：环境变量（验收截图用）> gui.json > 跟随系统。
-        let mut theme_mode = theme::load_gui_settings(&data_dir).theme;
+        let gui_settings = theme::load_gui_settings(&data_dir);
+        let mut theme_mode = gui_settings.theme;
         if let Ok(forced) = std::env::var("DRIVE_GUI_SHOT_THEME") {
             match forced.to_lowercase().as_str() {
                 "dark" => theme_mode = ThemeMode::Dark,
@@ -325,6 +334,16 @@ impl GuiApp {
             }
         }
         let system_light = platform::system_prefers_light();
+        // 自动开始同步：环境变量测试覆盖 > gui.json（默认开）。
+        let mut auto_start_sync = gui_settings.auto_start_sync;
+        if let Ok(forced) = std::env::var("DRIVE_GUI_AUTOSTART_SYNC") {
+            match forced.trim() {
+                "0" | "false" => auto_start_sync = false,
+                "1" | "true" => auto_start_sync = true,
+                _ => {}
+            }
+        }
+        let hide_to_tray = gui_settings.hide_to_tray && crate::tray::supported();
 
         let wizard = WizardState {
             step: 0,
@@ -380,23 +399,102 @@ impl GuiApp {
             system_light,
             applied_light: !theme_mode.palette(system_light).light,
             last_system_probe: Instant::now(),
+            auto_start_sync,
+            hide_to_tray,
+            tray: None,
+            tray_hwnd: std::sync::Arc::new(std::sync::atomic::AtomicIsize::new(0)),
+            quitting: false,
+            was_minimized: false,
         };
         app.refresh_store();
         app.apply_theme(&cc.egui_ctx);
+        let tray_bridge = crate::tray::TrayBridge {
+            ctx: cc.egui_ctx.clone(),
+            cmd_tx: app.cmd_tx.clone(),
+            remote_clipboard: app.remote_clip_tx.clone(),
+            data_dir: data_dir.clone(),
+            hwnd: app.tray_hwnd.clone(),
+        };
+        app.tray = crate::tray::Tray::new(
+            &cc.egui_ctx,
+            &format!("drive-sync · {}", app.sync_state.label()),
+            tray_bridge.clone(),
+        );
+        if app.tray.is_some() {
+            logbuf::log("系统托盘图标已创建（左键显示主界面，右键菜单：显示/开始/停止/退出）");
+        } else {
+            logbuf::log("未创建系统托盘图标（当前平台不支持或创建失败，回退任务栏）");
+        }
+        // 验收测试钩子：2s 隐藏 → 4s 从托盘恢复 → 6s 退出（仅调试用，独立于 UI 重绘）。
+        if std::env::var("DRIVE_GUI_TEST_TRAY")
+            .map(|value| value == "1")
+            .unwrap_or(false)
+        {
+            let bridge = tray_bridge.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(2));
+                bridge.hide();
+                std::thread::sleep(Duration::from_secs(2));
+                bridge.show();
+                std::thread::sleep(Duration::from_secs(2));
+                bridge.quit();
+            });
+        }
         if force_wizard {
             app.prefill_wizard_for_screenshots();
         }
-        if !app.screen_wizard
-            && std::env::var("DRIVE_GUI_AUTOSTART_SYNC")
-                .map(|value| value == "1")
-                .unwrap_or(false)
-        {
+        // 打开即同步：已完成向导（identity/relay/token 完整）且设置开启时才自动开始。
+        let configured = !app.screen_wizard;
+        if configured && app.auto_start_sync {
+            logbuf::log("打开即同步：自动开始连接中继（可在设置中关闭）");
             app.start_sync();
         }
         if !app.screen_wizard {
             app.maybe_auto_pair();
         }
         app
+    }
+
+    fn save_gui_prefs(&self) {
+        let settings = GuiSettings {
+            theme: self.theme_mode,
+            auto_start_sync: self.auto_start_sync,
+            hide_to_tray: self.hide_to_tray,
+        };
+        if let Err(error) = theme::save_gui_settings(&self.data_dir, &settings) {
+            logbuf::log(format!("保存 gui.json 失败: {error:#}"));
+        }
+    }
+
+    fn update_tray_tooltip(&mut self) {
+        if let Some(tray) = self.tray.as_mut() {
+            tray.set_tooltip(&format!("drive-sync · {}", self.sync_state.label()));
+        }
+    }
+
+    /// 最小化 → 隐藏到托盘；关闭 X → 默认隐藏到托盘（设置可关）。
+    fn handle_window_events(&mut self, ctx: &egui::Context) {
+        if crate::tray::supported() && self.tray.is_some() {
+            let minimized = ctx
+                .input(|input| input.viewport().minimized)
+                .unwrap_or(false);
+            if minimized && self.hide_to_tray && !self.was_minimized {
+                self.was_minimized = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                logbuf::log("窗口已最小化到系统托盘（同步继续运行）");
+            } else if !minimized && self.was_minimized {
+                self.was_minimized = false;
+            }
+            if ctx.input(|input| input.viewport().close_requested())
+                && self.hide_to_tray
+                && !self.quitting
+                && !crate::tray::quit_requested()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                logbuf::log("关闭窗口已改为隐藏到系统托盘（同步继续运行；托盘菜单可退出）");
+            }
+        }
     }
 
     /// 应用当前主题（palette 切换立即生效）。
@@ -438,11 +536,8 @@ impl GuiApp {
 
     fn set_theme_mode(&mut self, ctx: &egui::Context, mode: ThemeMode) {
         self.theme_mode = mode;
-        let settings = GuiSettings { theme: mode };
-        match theme::save_gui_settings(&self.data_dir, &settings) {
-            Ok(()) => self.toast(true, format!("外观主题：{}", mode.label())),
-            Err(error) => self.toast(false, format!("保存 gui.json 失败: {error:#}")),
-        }
+        self.save_gui_prefs();
+        self.toast(true, format!("外观主题：{}", mode.label()));
         self.apply_theme(ctx);
         ctx.request_repaint();
     }
@@ -926,13 +1021,26 @@ impl GuiApp {
 // ---------------------------------------------------------------------------
 
 impl eframe::App for GuiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // 记录原生窗口句柄，供托盘线程隐藏/恢复窗口（Windows）。
+        #[cfg(target_os = "windows")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = frame.window_handle() {
+                if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                    self.tray_hwnd
+                        .store(win32.hwnd.get(), std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        }
         self.poll_messages();
         if self.last_refresh.elapsed() >= Duration::from_secs(1) {
             self.last_refresh = Instant::now();
             self.refresh_store();
         }
         self.maybe_follow_system_theme(ctx);
+        self.handle_window_events(ctx);
+        self.update_tray_tooltip();
         self.handle_screenshot_events(ctx);
 
         if self.screen_wizard {
@@ -1121,7 +1229,7 @@ fn wizard_welcome(app: &mut GuiApp, ui: &mut egui::Ui) {
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.label(theme::muted(
-                "注意：GUI 与 CLI daemon 不要同时运行（同一设备在中继上只允许一条连接，会互踢）。",
+                "注意：GUI 与命令行客户端不要同时运行（同一设备在中继上只允许一条连接，会互踢；本应用启动即为常驻同步）。",
             ));
         });
     ui.add_space(14.0);
@@ -1712,7 +1820,21 @@ fn page_status(app: &mut GuiApp, ui: &mut egui::Ui) {
             ui.end_row();
         });
     if let SyncState::Error { message } = &app.sync_state {
-        theme::hint(ui, Some(false), message);
+        let message = message.clone();
+        theme::card_titled(ui, "连接失败", |ui| {
+            theme::hint(ui, Some(false), &message);
+            ui.add_space(6.0);
+            ui.label(theme::muted(
+                "中继不可达 / 令牌错误 / 网络问题都可能导致连接失败；窗口不会阻塞，可修改设置后重试。",
+            ));
+            ui.add_space(6.0);
+            if theme::primary_button(ui, "重试连接") {
+                app.start_sync();
+            }
+            if theme::secondary_button(ui, "检查中继设置") {
+                app.page = Page::Settings;
+            }
+        });
     }
     theme::card_titled(ui, "最近事件", |ui| {
         if app.events.is_empty() {
@@ -2148,6 +2270,58 @@ fn page_settings(app: &mut GuiApp, ui: &mut egui::Ui) {
         }));
     });
 
+    theme::card_titled(ui, "启动与窗口行为", |ui| {
+        let mut auto_start = app.auto_start_sync;
+        if ui
+            .checkbox(&mut auto_start, "打开应用时自动开始同步（打开即同步）")
+            .changed()
+        {
+            app.auto_start_sync = auto_start;
+            app.save_gui_prefs();
+            app.toast(
+                true,
+                if auto_start {
+                    "已启用：打开应用自动连接中继并开始同步"
+                } else {
+                    "已关闭：打开应用后需手动点「开始同步」"
+                },
+            );
+        }
+        ui.label(theme::muted(
+            "默认开启：已完成向导后打开应用即自动连接中继/剪切板/目录，无需点击按钮。",
+        ));
+        ui.add_space(6.0);
+        let mut hide_to_tray = app.hide_to_tray;
+        let tray_supported = crate::tray::supported();
+        if ui
+            .add_enabled(
+                tray_supported,
+                egui::Checkbox::new(&mut hide_to_tray, "最小化/关闭窗口时隐藏到系统托盘"),
+            )
+            .changed()
+        {
+            app.hide_to_tray = hide_to_tray;
+            app.save_gui_prefs();
+            app.toast(
+                true,
+                if hide_to_tray {
+                    "已启用：最小化或点 X 隐藏到系统托盘（同步继续）"
+                } else {
+                    "已关闭：最小化保留在任务栏；关闭窗口将退出"
+                },
+            );
+        }
+        if tray_supported {
+            ui.label(theme::muted(
+                "最小化或点窗口 X 默认隐藏到系统托盘，同步不中断；托盘左键显示主界面，右键菜单可开始/停止同步或退出。",
+            ));
+        } else {
+            ui.label(theme::muted(
+                "当前平台未启用系统托盘（Linux 回退任务栏窗口）；关闭窗口将直接退出。",
+            ));
+        }
+    });
+
     theme::card_titled(ui, "中继与设备", |ui| {
         egui::Grid::new("settings-conn")
             .num_columns(2)
@@ -2391,7 +2565,7 @@ fn draw_dialogs(app: &mut GuiApp, ctx: &egui::Context) {
                                 .and_then(|store| store.remove_peer(peer_id))
                             {
                                 Ok(_) => {
-                                    app.toast(true, "已删除配对记录（daemon 在 2 秒内检测并通知对端）");
+                                    app.toast(true, "已删除配对记录（同步引擎在 2 秒内检测并通知对端，离线对端上线后自动清理）");
                                     app.refresh_store();
                                 }
                                 Err(error) => {

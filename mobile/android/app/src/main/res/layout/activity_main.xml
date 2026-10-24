@@ -377,7 +377,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:gravity="center"
-            android:text="drive-sync v0.3.1 · 端到端加密 · 无 adb / root 依赖" />
+            android:text="drive-sync v0.3.2 · 端到端加密 · 全部操作在 App 内完成" />
 
     </LinearLayout>
 </ScrollView>

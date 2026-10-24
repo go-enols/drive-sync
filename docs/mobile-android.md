@@ -1,14 +1,15 @@
-# drive-sync Android 端（v0.3.1：App 内权限引导 · 一键同步 · PolyBot 深色/浅色 UI）
+# drive-sync Android 端（v0.3.2：打开即同步 · App 内权限引导 · PolyBot 深色/浅色 UI）
 
 Android 端是**可侧载 APK**：单 Activity 控制台 + 前台服务保持同步，UI 采用 PolyBot 风格，
 **同时支持深色与浅色两套配色**（默认跟随系统，也可在「设置 → 外观主题」手动选择）。
-所有需要的权限都在 **App 内引导申请**，**不需要 adb 指令、不需要 root**。
+**打开 App 即自动连接并开始同步**（首次启动仍走引导；可在设置关闭自动开始）。
+所有需要的权限与操作都在 **App 内完成**，无需命令行或额外工具。
 
 Rust 端（`crates/mobile-core`）本版本无改动；APK 由 GitHub Actions 构建，
-本地也可用 Android SDK/NDK 等价构建（见 §9）。
+本地也可用 Android SDK/NDK 等价构建（见 §10）。
 
 - applicationId：`dev.drivesync.mobile`
-- minSdk 29（Android 10）· targetSdk 36 · compileSdk 36 · 版本 `0.3.1`（versionCode 4）
+- minSdk 29（Android 10）· targetSdk 36 · compileSdk 36 · 版本 `0.3.2`（versionCode 5）
 - 原生库：`libdrive_mobile.so`（Rust cdylib + JNI 壳，ABI：arm64-v8a / armeabi-v7a / x86_64）
 
 ## 1. 获取 APK
@@ -18,7 +19,7 @@ Rust 端（`crates/mobile-core`）本版本无改动；APK 由 GitHub Actions �
 1. 打开仓库 Actions → **Android APK** 工作流；
 2. `Run workflow`（workflow_dispatch）或在 `main` 分支 push 触发；
 3. 构建完成后下载 artifact **`drive-sync-android-debug.apk`**
-   （artifact 内含 `drive-sync-android-debug.apk` 与版本化文件 `drive-sync-v0.3.1-android-debug.apk`，
+   （artifact 内含 `drive-sync-android-debug.apk` 与版本化文件 `drive-sync-v0.3.2-android-debug.apk`，
    debug 签名，可直接侧载）。
 
 工作流：安装 Rust Android targets + Android SDK 36 + NDK r27c + `cargo-ndk`，
@@ -49,6 +50,14 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 1. 手机 `设置 → 关于手机` 连点版本号开启开发者选项，允许「安装未知来源应用」（文件管理器/浏览器）；
 2. 把 APK 传到手机安装（或用文件管理器打开）；
 3. 打开 **drive-sync**：首次启动会弹出引导，建议点「去开启」进入权限页逐项授权。
+
+### 打开即用（自动开始同步）
+
+- 首次启动：完成引导与 relay/token/设备名配置（点一次「保存配置并初始化设备」→「连接」即可）。
+- **之后每次打开 App**：只要配置完整且「设置 → 启动与同步 → 打开应用时自动开始同步」开启（默认开启），
+  App 会自动连接中继并启动前台服务，**无需再点“连接”**；界面直接显示连接/在线状态。
+- 手动「断开」后本次运行保持断开；下次重新打开 App 仍按开关自动开始。
+- 关闭该开关后：打开 App 不自动连接，需要手动点「连接」；手动连接/断开始终可用。
 
 ## 3. 连自建 relay
 
@@ -82,7 +91,7 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 
 说明：
 
-- 这些操作都是系统标准 UI，无需开发者选项/adb；卸载重装或清除数据后需要重新授权。
+- 这些操作都是系统标准 UI；卸载重装或清除数据后需要重新授权。
 - **Android 14/15 限制**：开机时用 `BOOT_COMPLETED` 启动 `dataSync` 前台服务可能被系统拒绝；
   失败时 App 会发通知「后台同步未自动恢复」，点按打开 App 即可继续（不会崩溃）。
 - 电池优化豁免在部分国产 ROM 上仍需在系统「后台运行/自启动」里额外允许，属于厂商策略。
@@ -97,7 +106,7 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 | App 在前台 | **双向全自动** | 进程内 900ms 轮询剪贴板自动发送；收到远端自动写回 + 通知 |
 | App 在后台（接收方向） | **全自动** | `dataSync` 前台服务保持连接；收到远端文本自动写入系统剪贴板（后台写不受限）+ 通知 |
 | App 在后台（发送方向） | **一键完成**（非静默） | 系统禁止后台读剪贴板；点通知栏「同步当前剪贴板」或悬浮同步球，透明页面取得焦点后读取并发送，随后自动关闭 |
-| 完全后台静默发送 | 不支持 | 需要 root / 系统级 ADB / 默认输入法等特殊手段，本项目**不要求也不提供**这些步骤 |
+| 完全后台静默发送 | 不支持 | 需要系统级特殊权限（如 root 或默认输入法），本项目**不要求也不提供**这类步骤 |
 
 ### 一键发送的实现
 
@@ -106,7 +115,7 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 - **悬浮同步球**：授权悬浮窗后在权限页开启；单击小球走同一条透明页流程，长按关闭小球；
 - **去重**：通知/悬浮球对同一内容有 10 秒去重窗口；收到远端写入的内容还有 5 秒回环抑制
   （不会“刚收到又发回去”）；前台轮询也跳过手动一键发过的内容。
-- 两种方式都只用普通权限，**不需要 adb/appops**。
+- 两种方式都只用普通权限。
 
 ### 其他同步细节
 
@@ -114,7 +123,26 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 - 收到通知提示不展示剪切板内容明文（敏感信息）；
 - 图片/富文本：本版本仅文本自动写回，其他类型只同步事件。
 
-## 6. 已知限制 / 风险
+## 6. 操作入口审计（全部在 App 内完成）
+
+结论：**没有任何功能需要命令行或额外工具**；安装 APK 本身只需在系统 UI 里允许「未知来源」。
+自动连接、权限申请、配对、剪切板、主题、开机自启、断开/重连全部在 App 内完成：
+
+| 功能 | 入口（App 内） | 是否需要命令行 |
+|---|---|---|
+| 首次配置（relay/token/设备名） | 主页「中继与设备」→「保存配置并初始化设备」 | 否 |
+| 连接 / 断开 / 自动开始 | 自动（默认）或主页「连接 / 断开」；设置页开关 | 否 |
+| 配对（发起/加入、SAS） | 主页「配对」卡片 | 否 |
+| 剪切板同步（自动/一键/暂停） | 主页剪切板卡片、通知 Action、悬浮同步球 | 否 |
+| 权限申请（通知/电池/悬浮窗/开机自启） | 主页「权限与后台同步」页 | 否 |
+| 外观主题（跟随系统/深色/浅色） | 主页「设置与外观主题」→ 设置页 | 否 |
+| 在线设备 / 软件目录查看 | 主页「在线设备」「软件目录」卡片 + 刷新 | 否 |
+| 退出同步/停止后台 | 主页「断开」；系统设置中停止 App | 否 |
+
+移动端降级范围（非命令行缺失，而是产品裁剪）：软件目录**只读**（添加/删除/获取文件在桌面端完成）；
+云端暂存与文件传输暂未做手机 UI；手机端定位为“剪切板 + 配对 + 目录查看”。
+
+## 7. 已知限制 / 风险
 
 | 限制 | 说明 |
 |---|---|
@@ -128,7 +156,7 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 | 配对并发 | 配对会临时暂停同步会话（约 1~2 秒），期间剪切板发送返回 -3 |
 | 无法真机验证 | 构建/资源/JNI 已在本机等价验证，但 UI、权限弹窗、通知/悬浮球交互需真机实测 |
 
-## 7. PolyBot 风格 UI（深色 / 浅色）
+## 8. PolyBot 风格 UI（深色 / 浅色）
 
 入口：主页「设置与外观主题」→ 设置页「外观主题」：**跟随系统（默认）/ 深色 / 浅色**。
 选择写入 SharedPreferences（键 `theme_mode`）并立即生效：
@@ -144,14 +172,14 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 | 主色（按钮/高亮/选中） | 薄荷绿 `#22E3B0`（按钮文字 `#06121A`） | 薄荷绿 `#0EA37F`（按钮文字 `#FFFFFF`） |
 | 危险色 | `#F87171` | `#DC2626` |
 | 输入框 | `#0B1016`，聚焦薄荷绿边框 | `#F8FAFC`，聚焦薄荷绿边框 |
-| 顶部品牌栏 | 圆角薄荷绿 logo + `drive-sync` + `v0.3.1` 徽章 | 同左 |
+| 顶部品牌栏 | 圆角薄荷绿 logo + `drive-sync` + `v0.3.2` 徽章 | 同左 |
 | 通知色 | 薄荷绿 `#22E3B0` 强调 | 薄荷绿 `#0EA37F` 强调 |
 | 状态栏 / 导航栏 | 背景色 + 浅色图标 | 背景色 + 深色图标 |
 
-覆盖页面：主页（连接/配对/剪切板/设备/目录）、设置页（外观主题/权限入口/关于）、
+覆盖页面：主页（连接/配对/剪切板/设备/目录）、设置页（外观主题/启动与同步/权限入口/关于）、
 权限与后台同步页、透明一键同步页、悬浮同步球与通知样式。
 
-## 8. 架构与代码位置
+## 9. 架构与代码位置
 
 ```
 crates/mobile-core/            Rust：C ABI + JNI 壳（cdylib + staticlib；本版本未改）
@@ -160,14 +188,14 @@ crates/mobile-core/            Rust：C ABI + JNI 壳（cdylib + staticlib；本
 mobile/android/                Gradle 工程（Kotlin）
 ├── app/src/main/java/dev/drivesync/mobile/
 │   ├── Native.kt              JNI 绑定（object Native 的 external fun）
-│   ├── MainActivity.kt        主页：连接/配对/剪切板/设备/目录 + 首次引导
+│   ├── MainActivity.kt        主页：打开即自动连接/配对/剪切板/设备/目录 + 首次引导
 │   ├── PermissionsActivity.kt 权限状态页：通知/电池/悬浮窗/开机自启 + 能力边界
-│   ├── SettingsActivity.kt    设置页：外观主题（跟随系统/深色/浅色）+ 权限入口 + 关于
+│   ├── SettingsActivity.kt    设置页：外观主题 + 启动与同步开关 + 权限入口 + 关于
 │   ├── ThemePrefs.kt          主题偏好持久化 + AppCompat night mode + 非 Activity 组件配色判断
 │   ├── ClipboardQuickActivity.kt 透明一键同步页（通知 Action / 悬浮球）
 │   ├── FloatingBallManager.kt 悬浮同步球（授权悬浮窗后可用）
 │   ├── SyncService.kt         dataSync 前台服务（常驻通知 + 一键 Action）
-│   ├── SyncLauncher.kt        统一启动原生运行时（Activity/服务/开机自启共用）
+│   ├── SyncLauncher.kt        统一启动原生运行时 + 自动开始开关/配置完整性判断
 │   ├── BootReceiver.kt        可选开机自启（失败时通知提示）
 │   ├── AppState.kt            进程级状态、远端剪贴板写回、去重/回环抑制
 │   ├── ClipboardSync.kt       900ms 前台自动轮询发送
@@ -179,30 +207,31 @@ mobile/android/                Gradle 工程（Kotlin）
 JNI 符号与 Kotlin `Native` 方法一一对应：`Java_dev_drivesync_mobile_Native_dmInit` 等；
 事件/剪切板回调从 Rust 后台线程触发（JNI 每次 attach/detach），Kotlin 侧切主线程后更新 UI。
 
-## 9. 构建与验收
+## 10. 构建与验收
 
 - CI：`.github/workflows/android.yml`（workflow_dispatch + push），产物 artifact
-  `drive-sync-android-debug.apk`（含 `drive-sync-v0.3.1-android-debug.apk`）；
+  `drive-sync-android-debug.apk`（含 `drive-sync-v0.3.2-android-debug.apk`）；
 - Rust：`cargo check -p drive-mobile` 必须通过（本版本 Android 侧改动不涉及 Rust；已验证 exit 0）；
-- 真机验收清单：安装 → 首次引导 → 权限页逐项授权 → 配置 relay → 连接 → 桌面端配对 →
+- 真机验收清单：安装 → 首次引导 → 权限页逐项授权 → 配置 relay（保存+连接一次）→
+  **杀掉 App 后重新打开：应自动连接并启动前台服务（无需点连接）** → 桌面端配对 →
   复制文本（前台自动同步）→ 退到后台在桌面端复制（手机通知出现并自动写剪贴板）→
   点通知「同步当前剪贴板」/悬浮球（后台发送成功）→ 目录列表展示 →
-  设置页切换深色/浅色/跟随系统（立即生效，通知与悬浮球同步换色）。
+  设置页切换深色/浅色/跟随系统（立即生效）→ 设置页关闭自动开始开关后重开 App（应停在未连接，可手动连接）。
 
-### 本版本（v0.3.1）本地等价构建验证
+### 本版本（v0.3.2）本地等价构建验证
 
 已在 Windows 上使用 **Android SDK 36 / build-tools 36 / NDK 27 + Gradle 8.14.3 + JDK 21**
 跑通与 CI 等价的完整构建（CI 使用 Gradle 8.13 + JDK 17 + NDK r27c，命令一致）：
 
 - `cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 --platform 29 -o ... build -p drive-mobile --release`
   → 3 个 ABI 的 `libdrive_mobile.so` 构建成功；
-- `gradle assembleDebug` → **BUILD SUCCESSFUL**，APK 约 22.8 MB；
-- `aapt2 dump badging` 校验：`dev.drivesync.mobile` / `versionCode 4` / `versionName 0.3.1` /
+- `gradle assembleDebug` → **BUILD SUCCESSFUL**，APK 约 22.7 MB；
+- `aapt2 dump badging` 校验：`dev.drivesync.mobile` / `versionCode 5` / `versionName 0.3.2` /
   minSdk 29 / targetSdk 36 / MainActivity 可启动，权限清单包含通知、前台服务(dataSync)、
   开机自启、悬浮窗、电池优化豁免；
 - APK 内含 3 个 ABI 的 `libdrive_mobile.so`，导出 15 个
   `Java_dev_drivesync_mobile_Native_*` JNI 符号与 16 个 `dm_*` C ABI 符号（已用 llvm-nm 核对）。
 - 本机构建产出的临时 APK（不入库，供真机安装验收）：
-  `target/android-apk/drive-sync-android-debug.apk`（另有 `drive-sync-v0.3.1-android-debug.apk`）；
+  `target/android-apk/drive-sync-android-debug.apk`（另有 `drive-sync-v0.3.2-android-debug.apk`）；
   CI push 后会重新构建并上传 artifact。
 

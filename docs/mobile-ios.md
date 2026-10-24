@@ -1,13 +1,14 @@
 # drive-sync iOS 客户端（SwiftUI）
 
-> 版本：v0.3.1（2026-10 原型） · UI：PolyBot 双主题（深色 `#0B0F14` / 浅色 `#F5F7FA` + 薄荷绿）
+> 版本：v0.3.2（2026-10 原型） · UI：PolyBot 双主题（深色 `#0B0F14` / 浅色 `#F5F7FA` + 薄荷绿）
+> 启动行为：配置完整 + 已完成引导 + 「打开应用时自动连接」开启（默认）时，启动即自动连接（v0.3.2）
 > Bundle ID：`dev.drivesync.mobile` · Deployment Target：iOS 16.0
 > 代码：`mobile/ios/**` · CI：`.github/workflows/ios.yml` · 共享 C ABI：`crates/mobile-core/include/drive_mobile.h`
 > 协议基准：[protocol.md](protocol.md)；移动端平台调研：[platform-mobile.md](platform-mobile.md)
 
 本轮交付一个**可编译、可安装到模拟器、可用个人 Apple ID 签安装到 iPhone** 的原型 App：
 功能与 Android 端对齐（配置 / 配对 / 剪贴板收发 / 状态 / 设备列表 / 只读软件目录），
-UI 统一为 **PolyBot 双主题（深色/浅色 + 薄荷绿主色，设置页可切换）**，并带首次启动引导与权限状态页（见 §3）；
+UI 统一为 **PolyBot 双主题（深色/浅色 + 薄荷绿主色，设置页可切换）**，并带首次启动引导与权限状态页（见 §3），**配置完整且已完成引导时打开即自动连接**（v0.3.2，设置页可关闭）；
 剪贴板采用**无感自动同步**（前台自动发、收到自动写），但受 iOS 平台限制：
 **无后台静默能力（只有前台 + 后台约 25 秒接收窗口）、iOS 16+ 首次读取需系统粘贴授权、无 APNs 推送**。
 能力边界见 [§10](#10-无感同步能力边界与-ios-平台限制必读)。
@@ -34,6 +35,7 @@ UI 统一为 **PolyBot 双主题（深色/浅色 + 薄荷绿主色，设置页�
 要点：
 
 - **网络、加密、配对、持久化全部在 Rust 侧**（`crates/mobile-core` 复用 `drive-core` / `drive-client`），Swift 只做 UI 与系统剪贴板；
+- **打开即启动**：App 启动时若已完成引导、中继配置完整（地址 + 访问令牌 + 设备身份）且「打开应用时自动连接」开启，`bootstrap()` 自动 `dm_start` 并开始前台同步，无需点按钮（首次启动先进入 Onboarding）；
 - **无感同步**：前台每 ~1.5s 轮询 `UIPasteboard.changeCount` 检测变化 → 自动 `dm_send_clipboard_text`；收到远端内容 → 自动写 `UIPasteboard`。回环抑制用文本哈希 + 120s 时间窗，避免 A→B→A 回环（见 [§10](#10-无感同步能力边界与-ios-平台限制必读)）；
 - Swift ↔ Rust 之间只有 **JSON 字符串进/出 + 两个 C 回调**；Rust 分配的字符串必须用 `dm_string_free` 释放；
 - 回调来自 Rust 后台线程，`AppModel` 统一 `Task { @MainActor in … }` 切回主线程更新 `@Published`；
@@ -62,7 +64,7 @@ mobile/ios/
 │   │   ├── PairingView.swift            # 发起配对（8 位码 + QR）/ 加入配对 / 设备列表
 │   │   ├── SyncView.swift               # 自动同步开关 / 手动兜底 / 接收记录 / 运行状态
 │   │   ├── OnboardingView.swift         # 首次引导 + 权限与平台说明（通知/粘贴授权/后台限制）
-│   │   ├── SettingsView.swift           # 设置：外观主题（跟随系统/深色/浅色）/ 通知权限 / 关于
+│   │   ├── SettingsView.swift           # 设置：外观主题 / 启动与连接（自动连接开关）/ 通知权限 / 关于
 │   │   ├── CatalogView.swift            # 只读软件目录
 │   │   ├── EventLogView.swift           # 最近 200 条事件日志（sheet）
 │   │   └── Components.swift             # 状态卡/设备行/Toast/二维码等
@@ -98,7 +100,7 @@ mobile/ios/
 - 颜色全部是**动态颜色**（`UIColor(dynamicProvider:)` → `Color(uiColor:)`），随系统外观或手动主题即时切换；
 - 圆角 10–12pt；**主按钮**薄荷绿渐变填充 + 深色文字（`#07120E`，两套主题对比度一致）；**次按钮**卡片浮层底 + 细边框；危险操作红色低透明底；
 - **输入框**背景/边框使用主题令牌，聚焦时切换薄荷绿描边（`@FocusState` 驱动）；
-- **顶部品牌栏**：圆角 logo（深色=深绿底，浅色=浅绿底，均带薄荷绿描边与箭头图标）+ `drive-sync` + 版本徽章（当前 `v0.3.1`）+ 副标题；
+- **顶部品牌栏**：圆角 logo（深色=深绿底，浅色=浅绿底，均带薄荷绿描边与箭头图标）+ `drive-sync` + 版本徽章（当前 `v0.3.2`）+ 副标题；
 - **外观切换**：设置页「外观主题」= 跟随系统（默认）/ 深色 / 浅色；写 UserDefaults（`dev.drivesync.mobile.appearanceMode`），根视图 `.preferredColorScheme(nil/.dark/.light)` 即时生效；
 - **系统栏**：`Info.plist` 不再强制 `UIUserInterfaceStyle`；`DriveSyncApp` 的 `UITabBarAppearance`/`UINavigationBarAppearance` 使用动态颜色，跟随当前外观自动解析；
 - **启动屏**：`LaunchBackground` asset 提供 Any（`#F5F7FA`）与 Dark（`#0B0F14`）两套颜色，避免白/黑屏闪烁（启动屏跟随系统外观；App 内手动选择的主题在第一帧后生效）；
@@ -116,7 +118,7 @@ mobile/ios/
 
 「开始使用」/「稍后设置」都会持久化引导完成标记；之后可从「设置」页的
 「权限与平台说明」或「重新查看首次引导」随时打开同一页面（权限状态实时刷新）。
-「设置」页同时提供「外观主题」三选一与关于信息（版本 / Rust 核心 / 设备 ID / 数据目录）。
+「设置」页同时提供「外观主题」三选一、**「启动与连接」**（打开应用时自动连接开关，默认开启；配置完整时引导完成后立即自动连接，否则可点「立即连接」）与关于信息（版本 / Rust 核心 / 设备 ID / 数据目录）。
 升级自 v0.3.0 及更早版本的设备会再次看到一次引导（标记为空），属预期。
 
 ## 4. 环境要求
@@ -294,7 +296,7 @@ App 启动时若已有保存的 relay 配置，会自动连接（无需手动点
 ### 9.5 其它平台限制
 
 5. **只支持文本**：图片/文件不在本轮范围（Rust 侧图片类型只发 `clipboard_applied` 事件，UI 不处理）。
-6. **配对撤销**：C ABI 本轮无 `dm_peers_remove`，App 内未提供删除配对入口；可用桌面端 `drive-sync peers remove <device_id>`（对端在线会收到撤销通知，离线则经由中继撤销信箱补达）。
+6. **配对撤销**：C ABI 本轮无删除配对接口，iOS UI 暂未提供撤销入口（移动端能力降级，详见 §13）；对端在线时会收到撤销通知，离线则经由中继撤销信箱补达。
 7. **局域网中继**：填 `ws://192.168.x.x:...` 时 iOS 会弹「本地网络」权限（Info.plist 已配 `NSLocalNetworkUsageDescription`）；拒绝后无法连接局域网地址。
 8. **TLS**：连接走 Rust 的 WebSocket 栈（不经过 URLSession，因此不受 ATS 约束）。`ws://` 可用于开发；`wss://` 建议使用受信任证书（如 Caddy/Let's Encrypt 自动签发），自签证书默认校验失败（当前未提供“忽略证书”开关）。
 9. **剪贴板历史**：系统剪贴板可能被其他 App 覆盖，接收记录只在 App 内（最多 50 条，内存态，重启清空）。
@@ -325,11 +327,43 @@ App 启动时若已有保存的 relay 配置，会自动连接（无需手动点
 | 浅色模式下文字对比度差 / 背景仍发黑 | 页面颜色必须来自 `Theme.*` 动态令牌；不要在 View 里硬编码 hex 或 `Color.white`（QR 码区域除外） |
 | 启动瞬间白屏/黑屏闪烁 | `LaunchBackground` asset 需同时含 Any（`#F5F7FA`）与 Dark（`#0B0F14`）两套颜色，且 `Info.plist` 的 `UILaunchScreen.UIColorName` 指向它 |
 | 标签栏/导航栏颜色不跟随主题 | `DriveSyncApp.configureGlobalAppearance()` 必须使用 `Theme.ui*` 动态颜色（`UIColor.adaptive`），不要用固定的 `UIColor(hex:)` |
-| 品牌栏版本徽章不是 v0.3.1 | 版本取自 `CFBundleShortVersionString`（`project.yml` 的 `MARKETING_VERSION`）；改版本后需 `xcodegen generate` + 重新构建 |
+| 品牌栏版本徽章不是 v0.3.2 | 版本取自 `CFBundleShortVersionString`（`project.yml` 的 `MARKETING_VERSION`）；改版本后需 `xcodegen generate` + 重新构建 |
+| 启动后没有自动连接 | 检查「设置 → 打开应用时自动连接」是否开启；中继地址与访问令牌是否完整（缺一不连）；是否已完成首次引导。可到设置页点「立即连接」或连接页手动连接 |
+| 关闭开关后启动未自动连接 | 属预期：开关关闭时启动不连接；可设置页「立即连接」或连接页手动连接，不影响前台自动同步（连接后） |
 | 沙盒里没有 `drive-sync` 目录 | 首次启动 `dm_init` 才创建；检查 `AppModel.bootstrap()` 日志 |
 | Xcode 签名报 bundle id 冲突 | 免费账号必须用自己的唯一 bundle id |
 
-## 13. 后续工作（v0.4+）
+## 13. 功能覆盖与移动端降级（v0.3.2 审计）
+
+目标：iOS 端**所有用户操作都能在 UI 内完成，UI 内不出现命令行/终端引导**。
+审计口径：「打开即启动」= 配置完整（中继地址 + 访问令牌 + 设备身份）+ 已完成引导 + 设置开关开启时，启动自动连接。
+
+| 功能 | iOS UI 状态 | 说明 / 降级范围 |
+|---|---|---|
+| 设备身份初始化 | ✅ 自动 | 首次启动自动生成本机身份；「连接」页展示设备 ID |
+| 中继配置 / 连接 / 断开 | ✅ 连接页 | relay + access token（Keychain）+ 设备名；手动连接/断开 |
+| 打开应用自动连接 | ✅ 设置页开关（默认开） | 见上；关闭后启动不连接，可手动连接 |
+| 首次引导 / 权限状态 | ✅ Onboarding + 设置页 | 通知权限请求/去设置、粘贴授权说明、后台限制说明 |
+| 配对（发起） | ✅ 配对页 | 8 位码 + `dsync-pair-v1:` 二维码；可复制配对串 |
+| 配对（加入） | ✅ 配对页 | 输入 8 位码/粘贴扫码串；**App 内不做相机扫码**（可用系统相机扫码后粘贴，属降级） |
+| 已配对设备 / 在线状态 | ✅ 配对页 | 名称、device_id、在线/加密会话、配对时间 |
+| 解除配对（撤销） | ❌ 未提供 | C ABI 无删除配对接口；**移动端降级**：iOS UI 不做撤销，也不引导命令行；需在桌面端移除配对 |
+| 剪贴板发送 | ✅ 自动 + 手动兜底 | 前台轮询自动发送；iOS 16+ 首次需系统粘贴授权 |
+| 剪贴板接收 | ✅ 自动写 + 后台通知 | 前台自动写入；后台约 25s 窗口本地通知；无 APNs |
+| 软件目录 | ✅ 目录页（只读） | 仅展示同步来的条目；**无新增/编辑/删除/获取文件**（ABI 只读 `dm_catalog_json`） |
+| 文件传输 | ❌ 未提供 | 事件日志记录 `transfer_*` 事件；无发起/接收 UI（ABI 未暴露文件传输接口） |
+| 云端暂存（Vault） | ❌ 未提供 | ABI 未暴露 vault 接口，移动端本轮不支持 |
+| 外观主题 | ✅ 设置页 | 跟随系统 / 深色 / 浅色，即时生效并持久化 |
+| 通知权限 / 系统设置 | ✅ 设置页 + 引导页 | 状态展示、请求权限、打开系统设置 |
+| 事件日志 | ✅ 同步页 → 日志 sheet | 最近 200 条、不含剪贴板明文、可清空 |
+| 后台推送（APNs） | ❌ 未实现 | 本轮仅前台连接 + 后台约 25s 接收窗口 |
+| 命令行 / 终端依赖 | ✅ 无 | UI 不展示任何 CLI/终端指引（v0.3.2 已移除配对页的桌面命令提示） |
+
+**移动端降级范围（v0.3.2）**：撤销配对、目录写入/获取文件、文件传输、云端暂存、App 内相机扫码、APNs 推送
+均不在 iOS UI 范围；撤销配对/目录写入需等待 `drive-mobile` C ABI 扩展后在后续版本补齐。
+桌面端（GUI/CLI）能力不受影响；用户日常「打开即用」的核心链路（自动连接 → 配对 → 前台自动同步）已全部 UI 化。
+
+## 14. 后续工作（v0.4+）
 
 - APNs（alert/background push）+ 拉取 → 解密 → 本地通知 → 用户点通知打开 App 复制（对应 [platform-mobile.md](platform-mobile.md) §3.2/§4.1）；
 - `UIPasteControl` 免弹窗粘贴按钮；Share Extension「分享到 drive-sync」；

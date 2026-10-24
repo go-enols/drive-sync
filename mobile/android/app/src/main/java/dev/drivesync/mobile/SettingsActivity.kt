@@ -6,9 +6,10 @@ import android.widget.RadioGroup
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.switchmaterial.SwitchMaterial
 
 /**
- * 设置页：外观主题（跟随系统 / 深色 / 浅色）+ 权限入口 + 关于。
+ * 设置页：外观主题（跟随系统 / 深色 / 浅色）+ 启动与同步 + 权限入口 + 关于。
  *
  * 主题切换立即生效：AppCompatDelegate.setDefaultNightMode 会让已打开的
  * AppCompatActivity 自动 recreate，资源目录 values/ 与 values-night/ 随之切换；
@@ -16,15 +17,31 @@ import com.google.android.material.button.MaterialButton
  */
 class SettingsActivity : AppCompatActivity() {
     private lateinit var rgTheme: RadioGroup
+    private lateinit var swAutoStartSync: SwitchMaterial
     private var refreshing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
         rgTheme = findViewById(R.id.rgTheme)
+        swAutoStartSync = findViewById(R.id.swAutoStartSync)
         findViewById<MaterialButton>(R.id.btnBack).setOnClickListener { finish() }
         findViewById<MaterialButton>(R.id.btnOpenPermissions).setOnClickListener {
             startActivity(Intent(this, PermissionsActivity::class.java))
+        }
+        swAutoStartSync.isChecked = SyncLauncher.isAutoStartEnabled(this)
+        swAutoStartSync.setOnCheckedChangeListener { _, checked ->
+            if (refreshing) return@setOnCheckedChangeListener
+            SyncLauncher.setAutoStartEnabled(this, checked)
+            Toast.makeText(
+                this,
+                if (checked) {
+                    "已开启：下次打开 App 会自动开始同步"
+                } else {
+                    "已关闭：打开 App 后需手动点「连接」"
+                },
+                Toast.LENGTH_SHORT,
+            ).show()
         }
         rgTheme.setOnCheckedChangeListener { _, checkedId ->
             if (refreshing) return@setOnCheckedChangeListener
@@ -54,6 +71,7 @@ class SettingsActivity : AppCompatActivity() {
                     else -> R.id.rbSystem
                 },
             )
+            swAutoStartSync.isChecked = SyncLauncher.isAutoStartEnabled(this)
         } finally {
             refreshing = false
         }

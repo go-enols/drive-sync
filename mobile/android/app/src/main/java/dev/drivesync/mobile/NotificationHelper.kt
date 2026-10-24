@@ -13,7 +13,7 @@ import androidx.core.app.NotificationCompat
  *
  * PolyBot 风格：薄荷绿强调色 + 白色通知图标；深/浅色模式下使用对应对比度的薄荷绿
  * （深色 #22E3B0 / 浅色 #0EA37F）。常驻通知带“同步当前剪贴板”一键 Action
- * （后台无法自动读剪贴板时的官方替代方案，无需 adb/appops）。
+ * （后台无法自动读剪贴板时的一键替代方案）。
  */
 object NotificationHelper {
     const val CHANNEL_STATUS = "drive_sync_status"

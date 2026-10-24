@@ -97,6 +97,38 @@
                 android:text="深色：#0B0F14 背景 / #22E3B0 主色；浅色：#F5F7FA 背景 / #0EA37F 主色。状态栏、导航栏、悬浮球与通知同步适配。" />
         </LinearLayout>
 
+        <!-- ================= 启动与同步 ================= -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/Text.DriveSync.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="启动与同步" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/swAutoStartSync"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:checked="true"
+                android:text="打开应用时自动开始同步"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                style="@style/Text.DriveSync.Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="默认开启：打开 App 后自动连接中继并启动前台服务，无需点「连接」。首次启动仍会走引导；关闭后可随时手动连接/断开。" />
+        </LinearLayout>
+
         <!-- ================= 权限 ================= -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -117,7 +149,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="通知、电池优化豁免、悬浮窗、开机自启均在 App 内引导，无需 adb/root。" />
+                android:text="通知、电池优化豁免、悬浮窗、开机自启均在 App 内引导，所有操作无需其他工具。" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnOpenPermissions"
@@ -148,7 +180,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="drive-sync v0.3.1 · 端到端加密 · 中继只转发密文" />
+                android:text="drive-sync v0.3.2 · 端到端加密 · 中继只转发密文" />
 
             <TextView
                 style="@style/Text.DriveSync.Label"
@@ -164,7 +196,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:gravity="center"
-            android:text="drive-sync v0.3.1 · 深色 / 浅色 · 无 adb / root 依赖" />
+            android:text="drive-sync v0.3.2 · 深色 / 浅色 · 全部操作在 App 内完成" />
 
     </LinearLayout>
 </ScrollView>

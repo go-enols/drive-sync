@@ -176,6 +176,29 @@ final class AppModel: ObservableObject {
         appendLog("外观主题已切换为「\(mode.title)」", level: .info)
     }
 
+    /// 打开应用时是否自动连接（默认开启，可在设置页关闭）。
+    @Published private(set) var autoConnectOnLaunch: Bool = true
+
+    /// 中继配置是否完整：设备身份 + 中继地址 + 访问令牌。
+    var isConfigurationComplete: Bool {
+        identity != nil && !relayURL.trimmed.isEmpty && !accessToken.trimmed.isEmpty
+    }
+
+    /// 启动/引导完成后是否应该自动连接。
+    var shouldAutoConnectOnLaunch: Bool {
+        onboardingCompleted && autoConnectOnLaunch && isConfigurationComplete && !core.isRunning && !connecting
+    }
+
+    /// 设置「打开应用时自动连接」。
+    func setAutoConnectOnLaunch(_ enabled: Bool) {
+        autoConnectOnLaunch = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.autoConnectOnLaunch)
+        appendLog(
+            enabled ? "已开启：打开应用时自动连接中继" : "已关闭：打开应用时不再自动连接，可手动连接",
+            level: .info
+        )
+    }
+
     @Published var relayURL: String = ""
     @Published var accessToken: String = ""
     @Published var deviceName: String = UIDevice.current.name
@@ -293,15 +316,18 @@ final class AppModel: ObservableObject {
         appendLog("前台自动同步已启用：剪贴板变化自动发送、收到内容自动写入剪贴板（iOS 首次读取需系统粘贴授权）。", level: .info)
         await refreshNotificationPermission()
 
-        // 首次启动（或未完成引导）时展示 Onboarding / 权限说明。
+        // 首次启动（或未完成引导）→ Onboarding；引导完成后由 completeOnboarding 触发自动连接。
         if !onboardingCompleted {
             showOnboarding = true
-        }
-
-        // 已有保存的配置时自动连接，减少手动步骤（无感体验的一部分）。
-        if identity != nil && !relayURL.trimmed.isEmpty && !core.isRunning && !connecting {
-            appendLog("检测到已保存的中继配置，自动连接…", level: .info)
+            appendLog("首次启动：请先完成引导，随后将自动连接中继", level: .info)
+        } else if shouldAutoConnectOnLaunch {
+            // 打开即连接：已完成引导 + 配置完整 + 开关开启时，无需用户点按钮。
+            appendLog("配置完整，正在自动连接中继…", level: .info)
             await connect()
+        } else if !autoConnectOnLaunch {
+            appendLog("「打开应用时自动连接」已关闭：可到「连接」页手动连接。", level: .info)
+        } else if !isConfigurationComplete {
+            appendLog("中继配置不完整（需中继地址 + 访问令牌）：请到「连接」页完善。", level: .info)
         }
     }
 
@@ -335,6 +361,12 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(true, forKey: DefaultsKey.onboardingCompleted)
         showOnboarding = false
         appendLog("已完成首次引导与权限说明", level: .info)
+
+        // 引导完成后若配置完整且「打开应用时自动连接」开启，立即自动连接（打开即启动）。
+        if shouldAutoConnectOnLaunch {
+            appendLog("引导完成且配置完整，正在自动连接中继…", level: .info)
+            Task { await connect() }
+        }
     }
 
     /// 刷新通知权限状态（系统设置可能被用户修改）。
@@ -987,6 +1019,7 @@ final class AppModel: ObservableObject {
         autoSyncEnabled = defaults.object(forKey: DefaultsKey.autoSyncEnabled) as? Bool ?? true
         autoApplyReceivedEnabled = defaults.object(forKey: DefaultsKey.autoApplyReceived) as? Bool ?? true
         onboardingCompleted = defaults.bool(forKey: DefaultsKey.onboardingCompleted)
+        autoConnectOnLaunch = defaults.object(forKey: DefaultsKey.autoConnectOnLaunch) as? Bool ?? true
         if let rawAppearance = defaults.string(forKey: DefaultsKey.appearanceMode),
            let savedAppearance = AppearanceMode(rawValue: rawAppearance) {
             appearanceMode = savedAppearance
@@ -1029,6 +1062,7 @@ private enum DefaultsKey {
     static let autoApplyReceived = "dev.drivesync.mobile.autoApplyReceived"
     static let onboardingCompleted = "dev.drivesync.mobile.onboardingCompleted"
     static let appearanceMode = "dev.drivesync.mobile.appearanceMode"
+    static let autoConnectOnLaunch = "dev.drivesync.mobile.autoConnectOnLaunch"
 }
 
 extension String {

@@ -2,16 +2,17 @@
 
 自托管的多设备同步系统：**无感共享剪切板** + **软件目录表**（软件本体留在本地，云端只中转不存储）+ 可选 **30 天加密云端暂存**。支持 Windows / Linux / macOS / Android / iOS，中继服务器端到端加密、零内容存储，个人 / 小团队自建。
 
-> 当前版本：**v0.3.1**。桌面端（Windows/Linux/macOS）提供 GUI（PolyBot 风格，深/浅色主题 + 首次运行向导）与可常驻 CLI；Android 为可侧载 APK；iOS 为前台连接的原型 App（真机安装需 Apple 签名）。发布产物见 [GitHub Releases](https://github.com/go-enols/drive-sync/releases)，CI 预构建产物见 [Actions](https://github.com/go-enols/drive-sync/actions)。
+> 当前版本：**v0.3.2**。桌面端（Windows/Linux/macOS）提供 GUI（PolyBot 风格，深/浅色主题 + 首次运行向导）与可常驻 CLI；Android 为可侧载 APK；iOS 为前台连接的原型 App（真机安装需 Apple 签名）。发布产物见 [GitHub Releases](https://github.com/go-enols/drive-sync/releases)，CI 预构建产物见 [Actions](https://github.com/go-enols/drive-sync/actions)。
 
 ## 下载与安装
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
-| Windows x64 | `drive-sync-v0.3.1-x86_64-pc-windows-msvc.zip` | 解压即用 `drive-sync.exe` / `drive-relay.exe` |
-| Linux x64 | `drive-sync-v0.3.1-x86_64-unknown-linux-gnu.tar.gz` | 需 X11 依赖（arboard）；Wayland 见平台文档 |
+| **Windows（安装包，推荐）** | `DriveSync-Setup-v0.3.2.exe` | 双击安装（可创建桌面/开始菜单快捷方式与开机自启），打开 `DriveSync` 即自动同步 |
+| Windows（绿色版） | `drive-sync-v0.3.2-x86_64-pc-windows-msvc.zip` | 解压后双击 `DriveSync.exe` 即打开 GUI（含 CLI `drive-sync.exe` 与中继 `drive-relay.exe`） |
+| Linux x64 | `drive-sync-v0.3.2-x86_64-unknown-linux-gnu.tar.gz` | 需 X11 依赖（arboard）；Wayland 见平台文档 |
 | macOS Apple Silicon / Intel | `...-aarch64-apple-darwin.tar.gz` / `...-x86_64-apple-darwin.tar.gz` | 解压即用 |
-| Android 8.0+（API 29+） | `drive-sync-v0.3.1-android-debug.apk`（Actions artifact） | 允许未知来源侧载；权限在 App 内引导申请（无需 adb；后台接收自动，后台发送支持通知/悬浮球一键） |
+| Android 8.0+（API 29+） | `drive-sync-v0.3.2-android-debug.apk`（Actions artifact） | 允许未知来源侧载；权限在 App 内引导申请（无需 adb；后台接收自动，后台发送支持通知/悬浮球一键） |
 | iOS 16+ | `drive-sync-ios-simulator.zip`（Actions artifact） | CI 产物仅模拟器可运行；真机需用 Xcode + Apple ID 签名，详见 [iOS 文档](docs/mobile-ios.md) |
 
 > 没有 GitHub Release 时，可在 Actions 页面选择 `workflow_dispatch` 手动触发 `Release`（只产 artifact）或 `Android` / `iOS` / `CI` 工作流下载构建产物。
@@ -108,6 +109,10 @@ Windows / Linux / macOS 同一套源码），**所有设置都在 UI 页面完�
 - **外观主题**：深色 / 浅色 / 跟随系统（默认），设置页一键切换立即生效，保存在 GUI 专用
   `<数据目录>/gui.json`（不影响 CLI 配置）；系统主题按平台读取（Windows 注册表、Linux gsettings、
   macOS defaults），读取失败回退深色。
+- **打开即同步**：完成向导后打开应用自动连接中继并开始同步（无需点按钮/命令行）；设置页可关闭
+  「打开应用时自动开始同步」；连接失败在界面显示错误并可重试。
+- **系统托盘**（Windows/macOS）：最小化或关闭窗口默认隐藏到托盘（不占任务栏），同步继续；托盘左键
+  显示主界面，右键菜单可开始/停止同步或退出；tooltip 显示同步状态。Windows 安装包内为 `DriveSync.exe`。
 - 中文界面：自动加载系统字体（Windows `msyh.ttc`/`simhei.ttf`、macOS `PingFang.ttc`、Linux Noto CJK/wqy），
   缺失时英文兜底；默认窗口 1000×700。
 - 开机自启：Windows `HKCU\...\Run`、Linux `~/.config/autostart/*.desktop`、macOS `~/Library/LaunchAgents/*.plist`。
@@ -182,7 +187,7 @@ powershell -NoProfile -File scripts/demo.ps1    # 一键演示（同机双设备
 
 - v0.1：Rust 核心 + 中继 + 桌面 CLI + 剪切板/目录/文件传输/暂存 + e2e（已完成）
 - v0.2（当前）：项目更名；离线撤销通知信箱；90 天活跃期；自动更新；GitHub Actions 多平台产物；Android/iOS 原型 App
-- v0.3（当前）：桌面 GUI（PolyBot 风格 + 首启向导）、移动端权限引导与深色 UI、离线撤销/90 天规则；后续：局域网 mDNS + QUIC 直连、托盘、移动端系统推送
+- v0.3（当前）：桌面 GUI（PolyBot 风格 + 深浅主题 + 首启向导 + 打开即同步 + 系统托盘）、移动端权限引导与双主题 UI；后续：局域网 mDNS + QUIC 直连、移动端系统推送
 - v1.0：多用户、设备撤销广播/密钥轮换、Double Ratchet/后量子、自动更新灰度回滚
 
 ## License

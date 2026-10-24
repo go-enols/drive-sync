@@ -325,9 +325,15 @@ impl BackendState {
         config.remote_clipboard_tx = self.remote_clipboard.clone();
         let (runtime, handle) = Runtime::open(config)?;
         let device_id = handle.device_id().to_string();
+        let msg_tx = self.msg_tx.clone();
         let task = self.tokio.spawn(async move {
             if let Err(error) = runtime.run().await {
-                logbuf::log(format!("同步运行时退出: {error:#}"));
+                let text = format!("{error:#}");
+                logbuf::log(format!("同步运行时退出: {text}"));
+                // 连接失败/运行时退出必须回传 UI，让用户看到错误并可重试（不阻塞窗口）。
+                let _ = msg_tx.send(UiMsg::SyncStopped {
+                    reason: format!("连接中继/同步失败: {text}"),
+                });
             }
         });
         let watcher =

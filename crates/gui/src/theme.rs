@@ -109,10 +109,30 @@ impl ThemeMode {
 }
 
 /// GUI 专用持久化设置（与 CLI 的 config.json 完全分离）。
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GuiSettings {
     #[serde(default)]
     pub theme: ThemeMode,
+    /// 打开应用时自动开始同步（默认开启）。
+    #[serde(default = "default_true")]
+    pub auto_start_sync: bool,
+    /// 最小化/关闭窗口时隐藏到系统托盘（默认开启）。
+    #[serde(default = "default_true")]
+    pub hide_to_tray: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for GuiSettings {
+    fn default() -> Self {
+        Self {
+            theme: ThemeMode::System,
+            auto_start_sync: true,
+            hide_to_tray: true,
+        }
+    }
 }
 
 pub fn gui_settings_path(data_dir: &std::path::Path) -> std::path::PathBuf {
@@ -653,6 +673,7 @@ mod tests {
             &dir,
             &GuiSettings {
                 theme: ThemeMode::Light,
+                ..Default::default()
             },
         )
         .expect("保存 gui.json");

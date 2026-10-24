@@ -34,6 +34,61 @@ struct SettingsView: View {
                 }
             }
 
+            // MARK: 启动与连接
+            PolyCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        CardTitle(icon: "power", title: "启动与连接")
+                        Spacer(minLength: 8)
+                        StatusPill(text: model.phase.title, color: model.phase.color)
+                    }
+
+                    PolyToggleRow(
+                        icon: "bolt.circle",
+                        title: "打开应用时自动连接",
+                        subtitle: "配置完整且已完成引导时，启动后自动连接中继并开始前台同步（默认开启）",
+                        isOn: Binding(
+                            get: { model.autoConnectOnLaunch },
+                            set: { model.setAutoConnectOnLaunch($0) }
+                        )
+                    )
+
+                    PolyDivider()
+
+                    if model.core.isRunning {
+                        Button("断开当前连接") {
+                            Task { await model.disconnect() }
+                        }
+                        .buttonStyle(PolySecondaryButtonStyle())
+                    } else {
+                        Button {
+                            Task { await model.connect() }
+                        } label: {
+                            Label("立即连接", systemImage: "play.circle")
+                        }
+                        .buttonStyle(PolySecondaryButtonStyle())
+                        .disabled(!model.isConfigurationComplete || model.connecting)
+                        .opacity(!model.isConfigurationComplete || model.connecting ? 0.5 : 1.0)
+
+                        if !model.isConfigurationComplete {
+                            EmptyHint(
+                                icon: "exclamationmark.triangle",
+                                text: "中继地址或访问令牌不完整，请先到「连接」页完善配置。"
+                            )
+                            Button("去「连接」页配置") {
+                                model.selectedTab = .connect
+                            }
+                            .buttonStyle(PolyLinkButtonStyle())
+                        }
+                    }
+
+                    Text("关闭后启动不会自动连接，仍可在上方点「立即连接」。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             // MARK: 通知权限
             PolyCard {
                 VStack(alignment: .leading, spacing: 12) {

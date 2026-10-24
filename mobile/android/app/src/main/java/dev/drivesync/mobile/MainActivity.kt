@@ -19,13 +19,13 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * PolyBot 风格控制台：配置中继 → 连接 → 配对 → 剪切板同步 → 设备/目录 → 权限引导。
+ * PolyBot 风格控制台：打开即自动连接/同步（可关闭）→ 配对 → 剪切板同步 → 设备/目录 → 权限引导。
  *
- * 剪切板能力（如实呈现 Android 平台边界）：
- * - 前台：自动轮询剪贴板并发送（无感）；
- * - 后台接收：前台服务保持连接，收到远端内容自动写剪贴板 + 通知（无感）；
- * - 后台发送：系统禁止后台读剪贴板（普通权限无解）→ 通知栏 Action / 悬浮同步球
- *   一键完成，无需 adb。
+ * - 打开即用：已完成首次配置且「打开应用时自动开始同步」开启（默认）时，
+ *   MainActivity 启动后自动连接并拉起前台服务，无需点“连接”；
+ * - 首次启动/未配置时仍走引导与手动配置；
+ * - 剪切板能力（如实呈现 Android 平台边界）：前台自动轮询发送；后台接收自动写剪贴板；
+ *   后台发送用通知 Action / 悬浮同步球一键完成。
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var etRelay: TextInputEditText
@@ -51,6 +51,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSettings: MaterialButton
     private lateinit var swPause: SwitchMaterial
 
+    /** 自动连接进行中（避免与手动“连接”重复触发）。 */
+    private var autoConnecting = false
+
     private val prefs by lazy {
         getSharedPreferences(SyncLauncher.PREFS, Context.MODE_PRIVATE)
     }
@@ -69,10 +72,14 @@ class MainActivity : AppCompatActivity() {
         AppState.addEventListener(eventListener)
         wireButtons()
         updateConnectedUi()
+        val onboarded = prefs.getBoolean(SyncLauncher.KEY_ONBOARDING_DONE, false)
         showOnboardingIfNeeded()
         if (AppState.handle != 0L) {
             updateConnectedUi()
             refreshAll()
+        } else if (onboarded) {
+            // 打开即同步：已过首次引导且配置完整时自动连接（首次启动不触发，仍走引导）。
+            maybeAutoStart()
         }
     }
 
@@ -201,6 +208,10 @@ class MainActivity : AppCompatActivity() {
             toast("已连接")
             return
         }
+        if (autoConnecting) {
+            toast("正在自动连接中…")
+            return
+        }
         readConfig() ?: return
         btnConnect.isEnabled = false
         lifecycleScope.launch {
@@ -211,13 +222,53 @@ class MainActivity : AppCompatActivity() {
                 toast("启动失败：$result")
                 return@launch
             }
-            SyncService.start(this@MainActivity)
-            ClipboardSync.ensureStarted()
-            FloatingBallManager.syncFromPrefs(this@MainActivity)
+            startSyncServices()
             updateConnectedUi()
             toast("已启动连接，正在连接中继…")
             refreshAll()
         }
+    }
+
+    /**
+     * 打开即同步：已保存 relay/token 且设置开关开启时，启动后自动连接并启动前台服务。
+     * 未配置、首次引导、或用户在设置里关闭开关时保持手动模式。
+     */
+    private fun maybeAutoStart() {
+        if (AppState.handle != 0L || autoConnecting) return
+        if (!SyncLauncher.isAutoStartEnabled(this)) {
+            tvConnStatus.text = "未连接（已关闭「打开应用时自动开始同步」，可手动点「连接」）"
+            return
+        }
+        if (!SyncLauncher.hasCompleteConfig(this)) {
+            tvConnStatus.text = "未配置中继：填写下方信息后点「连接」完成首次设置"
+            return
+        }
+        autoConnecting = true
+        btnConnect.isEnabled = false
+        tvConnStatus.text = "正在自动连接中继…"
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { SyncLauncher.ensureRuntime(this@MainActivity) }
+            autoConnecting = false
+            if (result != "ok") {
+                updateConnectedUi()
+                tvConnStatus.text = "自动连接失败：$result（可手动点「连接」重试）"
+                return@launch
+            }
+            startSyncServices()
+            updateConnectedUi()
+            refreshAll()
+        }
+    }
+
+    /** 启动前台服务 + 剪切板轮询 + 悬浮球（手动/自动连接共用）。 */
+    private fun startSyncServices() {
+        try {
+            SyncService.start(this)
+        } catch (error: Exception) {
+            tvSyncStatus.text = "前台服务启动失败：${error.message ?: "未知错误"}"
+        }
+        ClipboardSync.ensureStarted()
+        FloatingBallManager.syncFromPrefs(this)
     }
 
     private fun disconnect() {
@@ -491,7 +542,7 @@ class MainActivity : AppCompatActivity() {
         MaterialAlertDialogBuilder(this)
             .setTitle("欢迎使用 drive-sync")
             .setMessage(
-                "下一步建议开启（均在 App 内完成，无需 adb）：\n" +
+                "下一步建议开启（均在 App 内完成）：\n" +
                     "• 通知权限：接收远端剪切板提醒与“一键同步”按钮\n" +
                     "• 电池优化豁免：保持后台服务存活\n" +
                     "• 可选悬浮窗：开启悬浮同步球\n\n" +

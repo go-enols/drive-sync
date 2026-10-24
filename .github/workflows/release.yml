@@ -175,7 +175,13 @@ jobs:
 
           cp "target/release/drive-sync${BIN_EXT}" "$PKG/"
           cp "target/release/drive-relay${BIN_EXT}" "$PKG/"
-          [[ -f "target/release/drive-sync-gui${BIN_EXT}" ]] && cp "target/release/drive-sync-gui${BIN_EXT}" "$PKG/"
+          if [[ -f "target/release/drive-sync-gui${BIN_EXT}" ]]; then
+            cp "target/release/drive-sync-gui${BIN_EXT}" "$PKG/"
+            # Windows: 友好可执行名，安装后双击 DriveSync.exe 即打开 GUI
+            if [[ "${BIN_EXT}" == ".exe" ]]; then
+              cp "target/release/drive-sync-gui.exe" "$PKG/DriveSync.exe"
+            fi
+          fi
 
           # macOS: 组装 DriveSync.app（无需签名，用户首次打开需右键 Open）
           if [[ "$(uname -s)" == "Darwin" && -f "crates/gui/packaging/Info.plist" ]]; then
@@ -225,6 +231,18 @@ jobs:
 
           ls -l "$DIST" "$DIST/assets"
 
+      - name: Build Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          choco install innosetup --no-progress -y
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          (Get-Content deploy/windows/drive-sync.iss -Raw).Replace("__VERSION__", $env:VERSION) | Set-Content deploy/windows/drive-sync.generated.iss -Encoding UTF8
+          & $iscc deploy/windows/drive-sync.generated.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem dist | Format-Table
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -232,6 +250,7 @@ jobs:
           if-no-files-found: error
           path: |
             dist/drive-sync-v*
+            dist/DriveSync-Setup-*.exe
             dist/assets/asset-*.json
 
   # ---------------------------------------------------------------------------
@@ -362,7 +381,7 @@ jobs:
           set -euo pipefail
           cd dist
           shopt -s nullglob
-          FILES=(drive-sync-v* latest.json)
+          FILES=(drive-sync-v* DriveSync-Setup-*.exe latest.json)
           if [[ ${#FILES[@]} -lt 2 ]]; then
             echo "::error::发布产物缺失（期望 >= 2 个文件）"
             ls -la

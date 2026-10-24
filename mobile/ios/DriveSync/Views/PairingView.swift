@@ -152,7 +152,7 @@ struct PairingView: View {
                 }
             }
 
-            Text("配对永久有效（无 TTL），除非任一方显式删除本地配对记录；本轮 iOS 未提供删除入口，可用桌面端 drive-sync peers remove。")
+            Text("配对永久有效（无 TTL），除非任一方显式删除本地配对记录；iOS 当前版本暂未提供删除配对入口（移动端能力降级，后续版本补齐）。")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .center)

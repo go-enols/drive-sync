@@ -21,7 +21,7 @@ import kotlin.math.abs
  * - 拖动：移动位置；
  * - 长按：关闭悬浮球（也可在“权限与后台同步”页开关）。
  *
- * 悬浮球让“后台发送”只需一次点击，替代 adb/appops 方案。
+ * 悬浮球让“后台发送”只需一次点击。
  */
 object FloatingBallManager {
     private var ball: TextView? = null

@@ -85,8 +85,8 @@ jobs:
       - name: Collect APK
         run: |
           cp mobile/android/app/build/outputs/apk/debug/app-debug.apk drive-sync-android-debug.apk
-          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk drive-sync-v0.3.1-android-debug.apk
-          ls -lh drive-sync-android-debug.apk drive-sync-v0.3.1-android-debug.apk
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk drive-sync-v0.3.2-android-debug.apk
+          ls -lh drive-sync-android-debug.apk drive-sync-v0.3.2-android-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -94,7 +94,7 @@ jobs:
           name: drive-sync-android-debug.apk
           path: |
             drive-sync-android-debug.apk
-            drive-sync-v0.3.1-android-debug.apk
+            drive-sync-v0.3.2-android-debug.apk
           if-no-files-found: error
           retention-days: 30
 

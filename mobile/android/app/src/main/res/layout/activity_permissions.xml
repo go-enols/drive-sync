@@ -57,7 +57,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="均在 App 内申请，无需 adb / root；可随时在系统设置关闭。" />
+                android:text="均在 App 内申请；可随时在系统设置关闭。" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -329,7 +329,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:gravity="center"
-            android:text="drive-sync v0.3.1 · 所有权限均在 App 内引导申请" />
+            android:text="drive-sync v0.3.2 · 所有权限均在 App 内引导申请" />
 
     </LinearLayout>
 </ScrollView>

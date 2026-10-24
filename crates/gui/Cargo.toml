@@ -24,3 +24,11 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+# 系统托盘：仅 Windows / macOS 启用（Linux 发行版依赖 libappindicator，风险较大，回退任务栏）。
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = "0.26"
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

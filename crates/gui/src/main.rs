@@ -21,6 +21,7 @@ mod logbuf;
 mod platform;
 mod screenshots;
 mod theme;
+mod tray;
 
 use std::path::PathBuf;
 use std::sync::mpsc;

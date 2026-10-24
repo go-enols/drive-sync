@@ -18,7 +18,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
 
 /**
- * 权限与后台同步页：所有权限都在 App 内引导申请（不需要 adb / root）。
+ * 权限与后台同步页：所有权限都在 App 内引导申请。
  *
  * - 通知权限（Android 13+ 运行时弹窗）：远端剪切板提醒 + 一键同步按钮；
  * - 电池优化豁免（可选，系统对话框）：保持后台服务存活；

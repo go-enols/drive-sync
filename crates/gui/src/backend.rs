@@ -1317,6 +1317,27 @@ async fn share_folder_now(
         .drain(..)
         .map(|state| (state.relative.clone(), state))
         .collect();
+    // 迁移旧版本：早期共享记录没有 files 状态，但目录里可能已有同一 share-id 的条目；
+    // 先清掉这些旧条目，再按增量状态重新登记，避免升级后出现重复条目。
+    if previous.is_empty() {
+        let store = Store::open(&data_dir)?;
+        let (catalog, _) = store.load_catalog()?;
+        let old_ids: Vec<String> = catalog
+            .visible()
+            .filter(|entry| entry.tags.iter().any(|tag| tag == &share_id_tag))
+            .map(|entry| entry.id.clone())
+            .collect();
+        for id in old_ids {
+            match handle.as_ref() {
+                Some(handle) => {
+                    let _ = handle.catalog_remove(id).await;
+                }
+                None => {
+                    let _ = catalog_remove_offline(&data_dir, &id);
+                }
+            }
+        }
+    }
     let mut next_files = Vec::with_capacity(files.len());
     let mut seen = HashSet::new();
     let mut changed = 0usize;

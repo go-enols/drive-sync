@@ -10,10 +10,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CString};
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use drive_client::{
@@ -34,6 +35,28 @@ pub const DM_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub type ClipboardCallback = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void);
 /// C ABI：事件回调（JSON）。
 pub type EventCallback = unsafe extern "C" fn(*const c_char, *mut c_void);
+
+/// 追加一行运行期日志到 `<数据目录>/runtime.log`，供 App 内“复制诊断日志”读取。
+/// 只保留最近约 1 MiB，避免长期运行无限增长。
+fn append_runtime_log(dir: &Path, message: &str) {
+    let path = dir.join("runtime.log");
+    if let Ok(metadata) = std::fs::metadata(&path) {
+        if metadata.len() > 1_048_576 {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(file, "[{stamp}] {message}");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 设备上下文（进程级单例，dm_init/dm_load 设置）
@@ -217,12 +240,20 @@ impl Inner {
         callbacks: Callbacks,
     ) -> Result<Arc<Self>> {
         let settings = resolve_settings(&device.data_dir, relay_override, token_override)?;
+        let log_dir = device.data_dir.clone();
+        std::panic::set_hook(Box::new(move |info| {
+            append_runtime_log(&log_dir, &format!("PANIC: {info}"));
+        }));
+        append_runtime_log(&device.data_dir, "Inner::start");
         let inner = Inner::new(device, settings, callbacks);
+        append_runtime_log(&inner.data_dir, "dispatcher starting");
         inner.spawn_dispatcher()?;
         if let Err(error) = inner.start_session() {
+            append_runtime_log(&inner.data_dir, &format!("start_session failed: {error:#}"));
             inner.shutdown_dispatcher();
             return Err(error);
         }
+        append_runtime_log(&inner.data_dir, "start_session ok");
         let name = inner.name();
         inner.emit_event(json!({
             "type": "started",
@@ -308,6 +339,10 @@ impl Inner {
         if settings.relay_url.trim().is_empty() {
             bail!("未配置中继地址（relay_url）");
         }
+        append_runtime_log(
+            &self.data_dir,
+            &format!("start_session: relay={}", settings.relay_url),
+        );
         let mut config = RuntimeConfig::new(
             &self.data_dir,
             settings.relay_url.clone(),
@@ -320,6 +355,7 @@ impl Inner {
         config.remote_clipboard_tx = Some(clip_tx);
 
         let (runtime, handle) = Runtime::open(config).context("打开同步运行时失败")?;
+        append_runtime_log(&self.data_dir, "Runtime::open ok");
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -342,7 +378,12 @@ impl Inner {
                 }
             })
             .context("创建剪切板线程失败")?;
-        rt.spawn(runtime.run());
+        let log_dir = self.data_dir.clone();
+        rt.spawn(async move {
+            append_runtime_log(&log_dir, "runtime.run started");
+            let result = runtime.run().await;
+            append_runtime_log(&log_dir, &format!("runtime.run exited: {result:?}"));
+        });
 
         let mut state = lock(&self.state);
         state.session = Some(Session {
@@ -468,6 +509,7 @@ impl Inner {
             }
         }
         if let Some(value) = runtime_event_json(&event) {
+            append_runtime_log(&self.data_dir, &format!("event: {value}"));
             self.emit_event(value);
         }
     }

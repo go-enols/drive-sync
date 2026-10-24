@@ -1,5 +1,7 @@
 package dev.drivesync.mobile
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
 import android.widget.RadioGroup
@@ -8,6 +10,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
+import java.io.File
 
 /**
  * 设置页：外观主题（跟随系统 / 深色 / 浅色）+ 启动与同步 + 权限入口 + 关于。
@@ -48,6 +51,9 @@ class SettingsActivity : AppCompatActivity() {
             ).show()
         }
         btnCheckUpdate.setOnClickListener { checkForUpdate() }
+        findViewById<MaterialButton>(R.id.btnCopyDiagnostics).setOnClickListener {
+            copyDiagnostics()
+        }
         findViewById<MaterialButton>(R.id.btnBack).setOnClickListener { finish() }
         findViewById<MaterialButton>(R.id.btnOpenPermissions).setOnClickListener {
             startActivity(Intent(this, PermissionsActivity::class.java))
@@ -82,6 +88,27 @@ class SettingsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshSelection()
+    }
+
+    private fun copyDiagnostics() {
+        val logFile = File(filesDir, "drive-sync/runtime.log")
+        val log = try {
+            if (logFile.isFile) logFile.readText().takeLast(30000) else "(没有 runtime.log)"
+        } catch (error: Throwable) {
+            "(读取 runtime.log 失败：${error.message})"
+        }
+        val prefs = getSharedPreferences(SyncLauncher.PREFS, MODE_PRIVATE)
+        val relay = prefs.getString(SyncLauncher.KEY_RELAY, "").orEmpty()
+        val text = buildString {
+            appendLine("app=${UpdateChecker.currentVersion(this@SettingsActivity)} build=${UpdateChecker.currentBuild(this@SettingsActivity)}")
+            appendLine("relay=$relay")
+            appendLine("lastError=${AppState.lastError}")
+            appendLine("--- runtime.log ---")
+            append(log)
+        }
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText("drive-sync diagnostics", text))
+        Toast.makeText(this, "诊断日志已复制到剪贴板", Toast.LENGTH_SHORT).show()
     }
 
     private fun checkForUpdate() {

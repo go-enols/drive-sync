@@ -235,6 +235,7 @@ class MainActivity : AppCompatActivity() {
             }
             startSyncServices()
             updateConnectedUi()
+            watchConnectionTimeout()
             toast("已启动连接，正在连接中继…")
             refreshAll()
         }
@@ -267,8 +268,18 @@ class MainActivity : AppCompatActivity() {
             }
             startSyncServices()
             updateConnectedUi()
+            watchConnectionTimeout()
             refreshAll()
         }
+    }
+
+    /** 连接看门狗：20 秒仍停在“正在连接”就给出明确提示，避免无限等待。 */
+    private fun watchConnectionTimeout() {
+        window.decorView.postDelayed({
+            if (AppState.handle != 0L && tvConnStatus.text?.contains("正在连接") == true) {
+                tvConnStatus.text = "连接超时：检查网络/VPN，或到设置「复制诊断日志」发给我"
+            }
+        }, 20_000)
     }
 
     /** 启动前台服务 + 剪切板轮询 + 悬浮球（手动/自动连接共用）。 */

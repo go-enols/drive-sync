@@ -1,13 +1,13 @@
 # drive-sync iOS 客户端（SwiftUI）
 
-> 版本：v0.3.0（2026-10 原型） · UI：PolyBot 深色主题（背景 `#0B0F14` + 薄荷绿 `#22E3B0`）
+> 版本：v0.3.1（2026-10 原型） · UI：PolyBot 双主题（深色 `#0B0F14` / 浅色 `#F5F7FA` + 薄荷绿）
 > Bundle ID：`dev.drivesync.mobile` · Deployment Target：iOS 16.0
 > 代码：`mobile/ios/**` · CI：`.github/workflows/ios.yml` · 共享 C ABI：`crates/mobile-core/include/drive_mobile.h`
 > 协议基准：[protocol.md](protocol.md)；移动端平台调研：[platform-mobile.md](platform-mobile.md)
 
 本轮交付一个**可编译、可安装到模拟器、可用个人 Apple ID 签安装到 iPhone** 的原型 App：
 功能与 Android 端对齐（配置 / 配对 / 剪贴板收发 / 状态 / 设备列表 / 只读软件目录），
-UI 统一为 **PolyBot 风格深色主题（深色背景 + 薄荷绿主色）**，并带首次启动引导与权限状态页（见 §3）；
+UI 统一为 **PolyBot 双主题（深色/浅色 + 薄荷绿主色，设置页可切换）**，并带首次启动引导与权限状态页（见 §3）；
 剪贴板采用**无感自动同步**（前台自动发、收到自动写），但受 iOS 平台限制：
 **无后台静默能力（只有前台 + 后台约 25 秒接收窗口）、iOS 16+ 首次读取需系统粘贴授权、无 APNs 推送**。
 能力边界见 [§10](#10-无感同步能力边界与-ios-平台限制必读)。
@@ -45,7 +45,7 @@ UI 统一为 **PolyBot 风格深色主题（深色背景 + 薄荷绿主色）**�
 mobile/ios/
 ├── project.yml                          # XcodeGen 工程定义（不提交 .xcodeproj）
 ├── DriveSync/
-│   ├── DriveSyncApp.swift               # @main，scenePhase → 前台连接/后台断开；深色系统外观
+│   ├── DriveSyncApp.swift               # @main，scenePhase → 前台连接/后台断开；动态系统外观
 │   ├── AppModel.swift                   # 状态机、FFI 调用编排、事件日志、配置/引导/权限状态
 │   ├── Theme/
 │   │   ├── Theme.swift                  # PolyBot 主题：颜色/圆角/渐变/按钮样式/AppInfo 版本
@@ -62,10 +62,11 @@ mobile/ios/
 │   │   ├── PairingView.swift            # 发起配对（8 位码 + QR）/ 加入配对 / 设备列表
 │   │   ├── SyncView.swift               # 自动同步开关 / 手动兜底 / 接收记录 / 运行状态
 │   │   ├── OnboardingView.swift         # 首次引导 + 权限与平台说明（通知/粘贴授权/后台限制）
+│   │   ├── SettingsView.swift           # 设置：外观主题（跟随系统/深色/浅色）/ 通知权限 / 关于
 │   │   ├── CatalogView.swift            # 只读软件目录
 │   │   ├── EventLogView.swift           # 最近 200 条事件日志（sheet）
 │   │   └── Components.swift             # 状态卡/设备行/Toast/二维码等
-│   ├── Resources/Assets.xcassets/       # AppIcon / AccentColor(薄荷绿) / LaunchBackground(深色启动屏)
+│   ├── Resources/Assets.xcassets/       # AppIcon / AccentColor / LaunchBackground（Any+Dark 双色）
 │   ├── Info.plist
 │   └── DriveSync-Bridging-Header.h      # #import "drive_mobile.h"
 ├── ffi/
@@ -77,27 +78,31 @@ mobile/ios/
     └── gen-app-icon.py                  # 重新生成 1024×1024 App 图标（纯 Python）
 ```
 
-## 3. UI 主题与首次引导（PolyBot 深色 + 薄荷绿）
+## 3. UI 主题与首次引导（PolyBot 双主题：深色 / 浅色 + 薄荷绿）
 
-全 App 统一为 PolyBot 风格：深色背景 + 卡片分区 + 薄荷绿主操作色。
-主题集中在 `mobile/ios/DriveSync/Theme/Theme.swift`，通用组件在 `Theme/PolyComponents.swift`；
-页面不散落硬编码颜色（换肤只改 Theme）。
+全 App 统一为 PolyBot 风格：卡片分区 + 薄荷绿主操作色，**同时支持深色与浅色**。
+颜色令牌集中在 `mobile/ios/DriveSync/Theme/Theme.swift`（动态 `Color`/`UIColor`），
+通用组件在 `Theme/PolyComponents.swift`；页面不散落硬编码颜色（换肤只改 Theme）。
 
-| 用途 | 颜色 |
-|---|---|
-| 背景 | `#0B0F14` |
-| 卡片 | `#111820` |
-| 边框 | `#1E2A33` |
-| 主文字 | `#E6EDF3` |
-| 次要文字 | `#9CA3AF` |
-| 主色（按钮/高亮/选中） | `#22E3B0` |
-| 危险 | `#F87171` |
+| 用途 | 深色 | 浅色 |
+|---|---|---|
+| 背景 | `#0B0F14` | `#F5F7FA` |
+| 卡片 | `#111820` | `#FFFFFF` |
+| 卡片浮层 | `#151E27` | `#F1F5F9` |
+| 边框 | `#1E2A33` | `#E2E8F0` |
+| 主文字 | `#E6EDF3` | `#0B1220` |
+| 次要文字 | `#9CA3AF` | `#64748B` |
+| 品牌薄荷绿 | `#22E3B0` / `#1FD9A8` | `#0EA37F` / `#10B981` |
+| 危险 | `#F87171` | `#DC2626` |
 
-- 圆角 10–12pt；**主按钮**为薄荷绿渐变填充 + 深色文字；**次按钮**深色底 + 细边框；危险操作为红色低透明底；
-- **输入框**深色底 + `#1E2A33` 边框，聚焦时切换薄荷绿描边（`@FocusState` 驱动）；
-- **顶部品牌栏**：圆角 logo（深绿底 + 薄荷绿描边 + 双向箭头图标）+ `drive-sync` + 版本徽章 `v<CFBundleShortVersionString>`（当前 `v0.3.0`）+ 副标题；
-- **深色状态栏/标签栏/导航栏**：`Info.plist` 强制 `UIUserInterfaceStyle = Dark`、状态栏浅色内容；`DriveSyncApp` 启动时配置 `UITabBarAppearance`/`UINavigationBarAppearance`；
-- 启动屏用 `LaunchBackground` 颜色（`#0B0F14`）避免白屏闪烁；不引入第三方 UI 库。
+- 颜色全部是**动态颜色**（`UIColor(dynamicProvider:)` → `Color(uiColor:)`），随系统外观或手动主题即时切换；
+- 圆角 10–12pt；**主按钮**薄荷绿渐变填充 + 深色文字（`#07120E`，两套主题对比度一致）；**次按钮**卡片浮层底 + 细边框；危险操作红色低透明底；
+- **输入框**背景/边框使用主题令牌，聚焦时切换薄荷绿描边（`@FocusState` 驱动）；
+- **顶部品牌栏**：圆角 logo（深色=深绿底，浅色=浅绿底，均带薄荷绿描边与箭头图标）+ `drive-sync` + 版本徽章（当前 `v0.3.1`）+ 副标题；
+- **外观切换**：设置页「外观主题」= 跟随系统（默认）/ 深色 / 浅色；写 UserDefaults（`dev.drivesync.mobile.appearanceMode`），根视图 `.preferredColorScheme(nil/.dark/.light)` 即时生效；
+- **系统栏**：`Info.plist` 不再强制 `UIUserInterfaceStyle`；`DriveSyncApp` 的 `UITabBarAppearance`/`UINavigationBarAppearance` 使用动态颜色，跟随当前外观自动解析；
+- **启动屏**：`LaunchBackground` asset 提供 Any（`#F5F7FA`）与 Dark（`#0B0F14`）两套颜色，避免白/黑屏闪烁（启动屏跟随系统外观；App 内手动选择的主题在第一帧后生效）；
+- 不引入第三方 UI 库。
 
 ### 3.1 首次启动引导（Onboarding）与权限状态页
 
@@ -109,9 +114,10 @@ mobile/ios/
 4. **后台限制**：iOS 不允许后台常驻连接或静默读写剪贴板；进入后台保留约 25 秒接收窗口后断开，回到前台自动重连；本轮未接入 APNs 推送；
 5. **隐私与安全**：端到端加密、access token 存 Keychain、App 日志不含剪贴板明文。
 
-「开始使用」/「稍后设置」都会持久化引导完成标记；之后可从「连接」页的
-「查看权限与平台说明」或「重新查看首次引导」随时打开同一页面（权限状态实时刷新）。
-升级自 v0.2.x 的设备会再次看到一次引导（标记为空），属预期。
+「开始使用」/「稍后设置」都会持久化引导完成标记；之后可从「设置」页的
+「权限与平台说明」或「重新查看首次引导」随时打开同一页面（权限状态实时刷新）。
+「设置」页同时提供「外观主题」三选一与关于信息（版本 / Rust 核心 / 设备 ID / 数据目录）。
+升级自 v0.3.0 及更早版本的设备会再次看到一次引导（标记为空），属预期。
 
 ## 4. 环境要求
 
@@ -315,9 +321,11 @@ App 启动时若已有保存的 relay 配置，会自动连接（无需手动点
 | 收到内容没有自动写入剪贴板 | 「收到内容后自动写入剪贴板」被关闭；或 App 不在前台（看通知/回前台后自动写入） |
 | 通知没有出现 | 未授予通知权限（设置 → DriveSync → 通知）；前台自动写入不依赖通知 |
 | 首次引导（Onboarding）每次启动都出现 | 引导完成标记在 UserDefaults `dev.drivesync.mobile.onboardingCompleted`；清理 App 数据/重装后会再出现。升级自 v0.2.x 的设备首次出现一次属预期 |
-| 界面不是深色 / 状态栏白底黑字 | 需同时保留 `Info.plist` 的 `UIUserInterfaceStyle = Dark`、根视图 `.preferredColorScheme(.dark)`、`DriveSyncApp.configureGlobalAppearance()`（标签栏/导航栏外观）；不要把主题改为 Automatic |
-| 启动瞬间白屏 | 确认 asset catalog 中存在 `LaunchBackground` 颜色，且 `Info.plist` 的 `UILaunchScreen.UIColorName` 指向它（`#0B0F14`） |
-| 品牌栏版本徽章不是 v0.3.0 | 版本取自 `CFBundleShortVersionString`（`project.yml` 的 `MARKETING_VERSION`）；改版本后需 `xcodegen generate` + 重新构建 |
+| 切换外观主题不生效 | 只应在 RootView 设置 `.preferredColorScheme(model.preferredColorScheme)`；确认没有其他视图再写死 `.preferredColorScheme(.dark)`，并检查 UserDefaults `dev.drivesync.mobile.appearanceMode` |
+| 浅色模式下文字对比度差 / 背景仍发黑 | 页面颜色必须来自 `Theme.*` 动态令牌；不要在 View 里硬编码 hex 或 `Color.white`（QR 码区域除外） |
+| 启动瞬间白屏/黑屏闪烁 | `LaunchBackground` asset 需同时含 Any（`#F5F7FA`）与 Dark（`#0B0F14`）两套颜色，且 `Info.plist` 的 `UILaunchScreen.UIColorName` 指向它 |
+| 标签栏/导航栏颜色不跟随主题 | `DriveSyncApp.configureGlobalAppearance()` 必须使用 `Theme.ui*` 动态颜色（`UIColor.adaptive`），不要用固定的 `UIColor(hex:)` |
+| 品牌栏版本徽章不是 v0.3.1 | 版本取自 `CFBundleShortVersionString`（`project.yml` 的 `MARKETING_VERSION`）；改版本后需 `xcodegen generate` + 重新构建 |
 | 沙盒里没有 `drive-sync` 目录 | 首次启动 `dm_init` 才创建；检查 `AppModel.bootstrap()` 日志 |
 | Xcode 签名报 bundle id 冲突 | 免费账号必须用自己的唯一 bundle id |
 

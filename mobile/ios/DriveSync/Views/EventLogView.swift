@@ -57,7 +57,6 @@ struct EventLogView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .preferredColorScheme(.dark)
     }
 
     private func logRow(_ line: LogLine) -> some View {

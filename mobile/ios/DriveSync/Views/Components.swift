@@ -200,7 +200,7 @@ struct ToastView: View {
                     RoundedRectangle(cornerRadius: Theme.cornerSmall, style: .continuous)
                         .strokeBorder(Theme.border, lineWidth: 1)
                 )
-                .shadow(color: Color.black.opacity(0.35), radius: 12, x: 0, y: 4)
+                .shadow(color: Color.black.opacity(0.22), radius: 12, x: 0, y: 4)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .onTapGesture {
@@ -230,6 +230,10 @@ struct QRCodeView: View {
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Color.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Theme.border, lineWidth: 1)
                     )
                     .accessibilityLabel("配对二维码")
             } else {

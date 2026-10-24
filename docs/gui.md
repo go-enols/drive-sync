@@ -3,7 +3,7 @@
 纯 Rust 桌面客户端（[eframe/egui](https://github.com/emilk/egui)），不依赖 Node.js / WebView，
 Windows / Linux / macOS 同一套源码。数据目录与 CLI（`drive-sync`）完全共用，可随时切换。
 
-> 适用版本：v0.3.0+（协议 v2）。GUI 与 CLI 使用同一 `identity.json` / `config.json` /
+> 适用版本：v0.3.1+（协议 v2）。GUI 与 CLI 使用同一 `identity.json` / `config.json` /
 > `peers.json` / `catalog.json` / `vault_keys.json`，不存在“GUI 账号”与“CLI 账号”之分。
 
 ## 1. 功能
@@ -16,8 +16,22 @@ Windows / Linux / macOS 同一套源码。数据目录与 CLI（`drive-sync`）�
 | 剪切板 | 自动同步开关、文本/图片共享开关、轮询间隔、回环抑制说明、最近记录（只显示类型/大小/方向，不含内容） |
 | 软件目录 | 列表（名称/版本/平台/大小/持有设备）、添加文件（哈希后登记）、删除（墓碑）、从在线持有设备加密获取、打开下载目录、传输记录 |
 | 云端暂存 | 本设备暂存对象列表（对象 ID/名称/大小/到期时间）、加密上传（TTL 1–30 天）、下载解密到目录 |
-| 设置 | 中继地址/token/设备名、开机自启、检查更新/立即更新、数据目录（显示/打开）、关于（版本/协议/GitHub）、退出 |
+| 设置 | 外观主题（跟随系统/深色/浅色）、中继地址/token/设备名、开机自启、检查更新/立即更新、数据目录（显示/打开）、关于（版本/协议/GitHub）、退出 |
 | 日志 | 滚动日志（`<数据目录>/logs/gui.log`）、清空、复制全部、打开日志目录 |
+
+### 外观主题（深色 / 浅色 / 跟随系统）
+
+- 设置页「外观主题」三选一，**修改立即生效**（无需重启），持久化到
+  `<数据目录>/gui.json`（GUI 专用，与 CLI 的 `config.json` 完全分离，不影响 CLI 兼容性）。
+- 默认「跟随系统」：Windows 读取 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`
+  的 `AppsUseLightTheme`；Linux 读取 `gsettings get org.gnome.desktop.interface color-scheme` /
+  `gtk-theme` 以及 `GTK_THEME` / `COLORSCHEME` 环境变量；macOS 读取
+  `defaults read -g AppleInterfaceStyle`。**读取失败回退深色，不 panic**；系统外观变化时自动跟随。
+- 两套 PolyBot 令牌（全部页面共用）：
+  - 深色：bg `#0B0F14`、card `#111820`、border `#1E2A33`、文字 `#E6EDF3/#9CA3AF`、
+    主色 `#22E3B0`、危险 `#F87171`；
+  - 浅色：bg `#F5F7FA`、card `#FFFFFF`、border `#E2E8F0`、主文字 `#0B1220`、次要 `#64748B`、
+    主色 `#0EA37F`（白底对比度）、危险 `#DC2626`；网格纹更淡，卡片阴影更收敛。
 
 说明：
 
@@ -99,24 +113,27 @@ GUI 完成的配对/目录/暂存操作，CLI 也能读取。
         drive-sync-gui    # release 二进制
   ```
   模板里的 `CFBundleIdentifier=dev.drivesync.gui`、`CFBundleExecutable=drive-sync-gui`；
-  发布时 `sed -i '' "s/__VERSION__/0.3.0/g" Info.plist` 即可（版本以实际为准）。
+  发布时 `sed -i '' "s/__VERSION__/0.3.1/g" Info.plist` 即可（版本以实际为准）。
 
 ## 8. 验收截图（不入库）
 
-`target/gui-screenshots/poly-*.png` 保存本机验收截图（`target/` 已在 `.gitignore` 中，不会提交）：
-PolyBot 风格首次向导 5 张（poly-01 ~ poly-05）+ 主界面 7 页各 1 张（poly-06 ~ poly-12），共 12 张 PNG
-（约 1500×1050，系统 DPI 缩放；每个页面已检查在 1000×700 下无裁剪，超长内容使用滚动区域）。
+`target/gui-screenshots/` 保存本机验收截图（`target/` 已在 `.gitignore` 中，不会提交）：
+**深色 `dark-*.png` 与浅色 `light-*.png` 各 12 张**（首次向导 5 张 + 主界面 7 页各 1 张），
+共 24 张 PNG（约 1500×1050，系统 DPI 缩放；每个页面已检查在 1000×700 下无裁剪，
+超长内容使用滚动区域，中文渲染与对比度正常）。
 
 生成方式（本机 Windows 已实测）：
 
 ```bash
-# 首次向导截图（空数据目录，自动分步截图后退出）
-DRIVE_GUI_SHOT_DIR=target/gui-screenshots DRIVE_GUI_SHOT_PREFIX=poly- DRIVE_GUI_SHOT_MODE=wizard \
-  drive-sync-gui --data-dir target/poly-demo-wizard
-
-# 主界面截图（自动准备演示数据：身份/配置/两个配对设备/目录/暂存）
-DRIVE_GUI_SHOT_DIR=target/gui-screenshots DRIVE_GUI_SHOT_PREFIX=poly- DRIVE_GUI_SHOT_MODE=main \
-  drive-sync-gui --data-dir target/poly-demo-main
+# 深色 / 浅色各跑一遍向导 + 主界面（DRIVE_GUI_SHOT_THEME 强制主题并配合前缀命名）
+for theme in dark light; do
+  DRIVE_GUI_SHOT_DIR=target/gui-screenshots DRIVE_GUI_SHOT_PREFIX="$theme-" \
+  DRIVE_GUI_SHOT_THEME="$theme" DRIVE_GUI_SHOT_MODE=wizard \
+    drive-sync-gui --data-dir "target/theme-demo-wizard-$theme"
+  DRIVE_GUI_SHOT_DIR=target/gui-screenshots DRIVE_GUI_SHOT_PREFIX="$theme-" \
+  DRIVE_GUI_SHOT_THEME="$theme" DRIVE_GUI_SHOT_MODE=main \
+    drive-sync-gui --data-dir "target/theme-demo-main-$theme"
+done
 ```
 
 调试用自动化环境变量（仅供本机联调，不写入文档示例的常规用法）：
@@ -124,7 +141,8 @@ DRIVE_GUI_SHOT_DIR=target/gui-screenshots DRIVE_GUI_SHOT_PREFIX=poly- DRIVE_GUI_
 | 变量 | 作用 |
 | --- | --- |
 | `DRIVE_GUI_SHOT_DIR` | 指定截图输出目录 |
-| `DRIVE_GUI_SHOT_PREFIX` | 截图文件名前缀（如 `poly-`） |
+| `DRIVE_GUI_SHOT_PREFIX` | 截图文件名前缀（如 `dark-` / `light-`） |
+| `DRIVE_GUI_SHOT_THEME=dark\|light` | 强制截图使用深色/浅色（覆盖 gui.json，不写入 gui.json） |
 | `DRIVE_GUI_SHOT_MODE=wizard\|main` | 截图流程（向导 / 主界面） |
 | `DRIVE_GUI_AUTOSTART_SYNC=1` | 启动后自动开始同步（验证/演示） |
 | `DRIVE_GUI_AUTO_PAIR=initiate` 或 `join:<8 位码>` | 自动发起/加入配对（配 `DRIVE_GUI_AUTO_CONFIRM_SAS=1` 自动确认 SAS） |
@@ -137,6 +155,8 @@ DRIVE_GUI_SHOT_DIR=target/gui-screenshots DRIVE_GUI_SHOT_PREFIX=poly- DRIVE_GUI_
 | 中文显示为方块 | 检查系统字体：Windows `C:\Windows\Fonts\msyh.ttc`/`simhei.ttf`、macOS `/System/Library/Fonts/PingFang.ttc`、Linux `Noto Sans CJK`/`wqy-microhei`；缺失时界面回退英文标签并记录日志 |
 | 启动后提示“已在运行” | 单实例锁：关闭任务栏/托盘里的旧窗口或结束旧 `drive-sync-gui` 进程 |
 | GUI 与 CLI 同时运行互相踢下线 | 同一设备只允许一条中继连接；停止其中一方的同步/daemon |
+| 主题切换不生效 / 跟随系统仍是深色 | 检查 `<数据目录>/gui.json` 的 `theme`（system/dark/light）；「跟随系统」在读取失败时按规范回退深色；可显式选「深色/浅色」覆盖 |
+| 想恢复默认主题 | 删除 `<数据目录>/gui.json` 后重启 GUI（默认跟随系统） |
 | 配对一直等待 | 双方都需在线并连接同一中继；确认 token 相同；SAS 超时会自动取消，可重试 |
 | 日志排错 | 设置页/日志页“打开日志目录”，文件 `<数据目录>/logs/gui.log`；报告问题时附最后 50 行（日志不含明文内容） |
 | Linux 无图形环境（CI） | 只保证编译通过；`cargo build -p drive-gui` 不需要显示器，运行需要 X11/Wayland + OpenGL |

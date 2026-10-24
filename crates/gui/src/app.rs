@@ -21,6 +21,7 @@ use crate::logbuf;
 use crate::platform;
 use crate::screenshots;
 use crate::theme;
+use crate::theme::{GuiSettings, ThemeMode};
 
 /// 向导预填中继地址（示例/默认值；token 需用户自行填写）。
 pub const RELAY_PLACEHOLDER: &str = "wss://sync.likecloud.top/ws";
@@ -103,10 +104,10 @@ impl SyncState {
 
     fn color(&self) -> egui::Color32 {
         match self {
-            SyncState::Running { .. } => theme::MINT,
-            SyncState::Starting => theme::WARN,
-            SyncState::Stopped => theme::MUTED,
-            SyncState::Error { .. } => theme::DANGER,
+            SyncState::Running { .. } => theme::mint(),
+            SyncState::Starting => theme::warn(),
+            SyncState::Stopped => theme::muted_color(),
+            SyncState::Error { .. } => theme::danger(),
         }
     }
 }
@@ -267,6 +268,12 @@ pub struct GuiApp {
     vault_download_dir: String,
     auto_pair_started: bool,
     pair_auto_confirmed_for: Option<String>,
+
+    /// 外观：跟随系统 / 深色 / 浅色（持久化到 `<data-dir>/gui.json`）。
+    theme_mode: ThemeMode,
+    system_light: Option<bool>,
+    applied_light: bool,
+    last_system_probe: Instant,
 }
 
 impl GuiApp {
@@ -307,6 +314,17 @@ impl GuiApp {
         if config.relay_url.trim().is_empty() {
             config.relay_url = RELAY_PLACEHOLDER.to_string();
         }
+
+        // 外观主题：环境变量（验收截图用）> gui.json > 跟随系统。
+        let mut theme_mode = theme::load_gui_settings(&data_dir).theme;
+        if let Ok(forced) = std::env::var("DRIVE_GUI_SHOT_THEME") {
+            match forced.to_lowercase().as_str() {
+                "dark" => theme_mode = ThemeMode::Dark,
+                "light" => theme_mode = ThemeMode::Light,
+                _ => {}
+            }
+        }
+        let system_light = platform::system_prefers_light();
 
         let wizard = WizardState {
             step: 0,
@@ -358,8 +376,13 @@ impl GuiApp {
             vault_download_dir: data_dir.join("incoming").display().to_string(),
             auto_pair_started: false,
             pair_auto_confirmed_for: None,
+            theme_mode,
+            system_light,
+            applied_light: !theme_mode.palette(system_light).light,
+            last_system_probe: Instant::now(),
         };
         app.refresh_store();
+        app.apply_theme(&cc.egui_ctx);
         if force_wizard {
             app.prefill_wizard_for_screenshots();
         }
@@ -374,6 +397,54 @@ impl GuiApp {
             app.maybe_auto_pair();
         }
         app
+    }
+
+    /// 应用当前主题（palette 切换立即生效）。
+    fn apply_theme(&mut self, ctx: &egui::Context) {
+        let palette = self.theme_mode.palette(self.system_light);
+        ctx.set_theme(if palette.light {
+            egui::ThemePreference::Light
+        } else {
+            egui::ThemePreference::Dark
+        });
+        theme::apply(ctx, palette);
+        self.applied_light = palette.light;
+    }
+
+    /// 「跟随系统」时检测系统外观变化并即时跟随（读取失败保持当前/回退深色）。
+    fn maybe_follow_system_theme(&mut self, ctx: &egui::Context) {
+        if self.theme_mode != ThemeMode::System {
+            return;
+        }
+        let raw = ctx.input(|input| input.raw.system_theme);
+        match raw {
+            Some(egui::Theme::Light) => self.system_light = Some(true),
+            Some(egui::Theme::Dark) => self.system_light = Some(false),
+            None => {
+                if self.last_system_probe.elapsed() >= Duration::from_secs(5) {
+                    self.last_system_probe = Instant::now();
+                    if let Some(light) = platform::system_prefers_light() {
+                        self.system_light = Some(light);
+                    }
+                }
+            }
+        }
+        let effective_light = self.system_light.unwrap_or(false);
+        if effective_light != self.applied_light {
+            self.apply_theme(ctx);
+            ctx.request_repaint();
+        }
+    }
+
+    fn set_theme_mode(&mut self, ctx: &egui::Context, mode: ThemeMode) {
+        self.theme_mode = mode;
+        let settings = GuiSettings { theme: mode };
+        match theme::save_gui_settings(&self.data_dir, &settings) {
+            Ok(()) => self.toast(true, format!("外观主题：{}", mode.label())),
+            Err(error) => self.toast(false, format!("保存 gui.json 失败: {error:#}")),
+        }
+        self.apply_theme(ctx);
+        ctx.request_repaint();
     }
 
     fn toast(&mut self, ok: bool, text: impl Into<String>) {
@@ -861,6 +932,7 @@ impl eframe::App for GuiApp {
             self.last_refresh = Instant::now();
             self.refresh_store();
         }
+        self.maybe_follow_system_theme(ctx);
         self.handle_screenshot_events(ctx);
 
         if self.screen_wizard {
@@ -923,9 +995,9 @@ pub fn install_fonts_and_style(ctx: &egui::Context) -> bool {
         loaded_font = true;
         break;
     }
-    // 固定暗色主题，避免 eframe 跟随系统浅色主题覆盖自定义视觉。
+    // 固定初始主题；GuiApp::new 会按 gui.json / 系统设置重新应用 palette。
     ctx.set_theme(egui::ThemePreference::Dark);
-    theme::apply(ctx);
+    theme::apply(ctx, &theme::DARK);
     loaded_font
 }
 
@@ -939,7 +1011,7 @@ fn draw_wizard(app: &mut GuiApp, ctx: &egui::Context) {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::NONE
-                .fill(theme::BG)
+                .fill(theme::bg())
                 .inner_margin(egui::Margin::symmetric(0, 16)),
         )
         .show(ctx, |ui| {
@@ -955,8 +1027,8 @@ fn draw_wizard(app: &mut GuiApp, ctx: &egui::Context) {
                         ui.vertical(|ui| {
                             ui.set_width(width);
                             egui::Frame::new()
-                                .fill(theme::PANEL)
-                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .fill(theme::panel())
+                                .stroke(egui::Stroke::new(1.0, theme::border()))
                                 .corner_radius(egui::CornerRadius::same(theme::CARD_RADIUS))
                                 .inner_margin(egui::Margin::same(18))
                                 .show(ui, |ui| {
@@ -991,25 +1063,29 @@ fn wizard_stepper(app: &GuiApp, ui: &mut egui::Ui) {
             let active = index == app.wizard.step;
             let done = index < app.wizard.step;
             let color = if active {
-                theme::MINT
+                theme::mint()
             } else if done {
-                theme::MUTED
+                theme::muted_color()
             } else {
-                theme::BORDER
+                theme::border()
             };
             let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
             ui.painter().circle_filled(rect.center(), 8.0, color);
             if active {
-                ui.painter().circle_filled(rect.center(), 3.5, theme::BG);
+                ui.painter().circle_filled(rect.center(), 3.5, theme::bg());
             }
             ui.label(
                 egui::RichText::new(format!("{}. {}", index + 1, label))
                     .size(13.0)
-                    .color(if active { theme::TEXT } else { theme::MUTED })
+                    .color(if active {
+                        theme::text()
+                    } else {
+                        theme::muted_color()
+                    })
                     .strong(),
             );
             if index + 1 < WIZARD_STEPS.len() {
-                ui.label(egui::RichText::new("─").color(theme::BORDER));
+                ui.label(egui::RichText::new("─").color(theme::border()));
             }
         }
     });
@@ -1021,7 +1097,7 @@ fn wizard_welcome(app: &mut GuiApp, ui: &mut egui::Ui) {
         egui::RichText::new("欢迎使用 drive-sync 桌面客户端")
             .size(20.0)
             .strong()
-            .color(theme::TEXT),
+            .color(theme::text()),
     );
     ui.add_space(8.0);
     for line in [
@@ -1032,14 +1108,15 @@ fn wizard_welcome(app: &mut GuiApp, ui: &mut egui::Ui) {
     ] {
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-            ui.painter().circle_filled(rect.center(), 3.0, theme::MINT);
-            ui.label(egui::RichText::new(line).color(theme::MUTED));
+            ui.painter()
+                .circle_filled(rect.center(), 3.0, theme::mint());
+            ui.label(egui::RichText::new(line).color(theme::muted_color()));
         });
     }
     ui.add_space(10.0);
     egui::Frame::new()
-        .fill(theme::PANEL_DARK)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .fill(theme::panel_dark())
+        .stroke(egui::Stroke::new(1.0, theme::border()))
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -1058,7 +1135,7 @@ fn wizard_device_name(app: &mut GuiApp, ui: &mut egui::Ui) {
         egui::RichText::new("给这台设备起个名字")
             .size(20.0)
             .strong()
-            .color(theme::TEXT),
+            .color(theme::text()),
     );
     ui.label(theme::muted("用于在其他设备的配对列表中识别本机。"));
     ui.add_space(10.0);
@@ -1087,7 +1164,7 @@ fn wizard_relay(app: &mut GuiApp, ui: &mut egui::Ui) {
         egui::RichText::new("连接中继服务器")
             .size(20.0)
             .strong()
-            .color(theme::TEXT),
+            .color(theme::text()),
     );
     ui.label(theme::muted(
         "自建中继地址（wss:// 需要 TLS）与共享访问令牌；令牌可在服务器配置中查看。",
@@ -1105,7 +1182,9 @@ fn wizard_relay(app: &mut GuiApp, ui: &mut egui::Ui) {
                 ui.add(
                     egui::TextEdit::singleline(&mut app.wizard.token)
                         .password(true)
-                        .hint_text(egui::RichText::new("服务器共享令牌").color(theme::MUTED))
+                        .hint_text(
+                            egui::RichText::new("服务器共享令牌").color(theme::muted_color()),
+                        )
                         .desired_width(430.0)
                         .margin(egui::vec2(10.0, 8.0)),
                 );
@@ -1157,7 +1236,7 @@ fn wizard_pairing(app: &mut GuiApp, ui: &mut egui::Ui) {
         egui::RichText::new("与其他设备配对")
             .size(19.0)
             .strong()
-            .color(theme::TEXT),
+            .color(theme::text()),
     );
     ui.label(theme::muted(
         "双方核对 6 位 SAS 校验码一致后才会保存配对记录；可跳过，稍后在「设备」页完成。",
@@ -1190,7 +1269,7 @@ fn wizard_finish(app: &mut GuiApp, ui: &mut egui::Ui) {
         egui::RichText::new("准备就绪")
             .size(20.0)
             .strong()
-            .color(theme::TEXT),
+            .color(theme::text()),
     );
     app.refresh_store();
     ui.add_space(8.0);
@@ -1275,15 +1354,15 @@ fn pair_panel_ui(
     if panel.started {
         ui.add_space(6.0);
         egui::Frame::new()
-            .fill(theme::PANEL_DARK)
-            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+            .fill(theme::panel_dark())
+            .stroke(egui::Stroke::new(1.0, theme::border()))
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(egui::RichText::new(&panel.progress.phase).color(theme::TEXT));
+                    ui.label(egui::RichText::new(&panel.progress.phase).color(theme::text()));
                 });
                 if let Some(code) = &panel.progress.code {
                     ui.add_space(4.0);
@@ -1293,7 +1372,7 @@ fn pair_panel_ui(
                             .size(26.0)
                             .strong()
                             .monospace()
-                            .color(theme::MINT),
+                            .color(theme::mint()),
                     );
                 }
                 if let Some(qr) = &panel.progress.qr {
@@ -1304,7 +1383,7 @@ fn pair_panel_ui(
                             egui::RichText::new(qr)
                                 .monospace()
                                 .size(11.0)
-                                .color(theme::MUTED),
+                                .color(theme::muted_color()),
                         )
                         .wrap(),
                     );
@@ -1316,7 +1395,7 @@ fn pair_panel_ui(
                 if let Some(sas) = &panel.progress.sas {
                     ui.add_space(8.0);
                     ui.label(theme::muted("SAS 校验码："));
-                    theme::big_text(ui, sas, theme::MINT);
+                    theme::big_text(ui, sas, theme::mint());
                     ui.label(theme::muted("与另一台设备屏幕显示的 SAS 核对一致后确认。"));
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -1406,8 +1485,8 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("brand-bar")
         .frame(
             egui::Frame::new()
-                .fill(theme::PANEL)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .fill(theme::panel())
+                .stroke(egui::Stroke::new(1.0, theme::border()))
                 .inner_margin(egui::Margin::symmetric(20, 12)),
         )
         .show(ctx, |ui| {
@@ -1419,12 +1498,12 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
                         egui::RichText::new("drive-sync")
                             .size(21.0)
                             .strong()
-                            .color(theme::TEXT),
+                            .color(theme::text()),
                     );
                     ui.label(
                         egui::RichText::new("桌面同步控制台")
                             .size(12.0)
-                            .color(theme::MUTED),
+                            .color(theme::muted_color()),
                     );
                 });
                 theme::right_aligned(ui, |ui| {
@@ -1442,7 +1521,7 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
                             app.online.len(),
                             app.sessions.len()
                         ))
-                        .color(theme::MUTED),
+                        .color(theme::muted_color()),
                     );
                     theme::pill(ui, &format!("v{}", env!("CARGO_PKG_VERSION")));
                 });
@@ -1454,15 +1533,15 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
         .exact_width(196.0)
         .frame(
             egui::Frame::new()
-                .fill(theme::PANEL_DARK)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .fill(theme::panel_dark())
+                .stroke(egui::Stroke::new(1.0, theme::border()))
                 .inner_margin(egui::Margin::symmetric(12, 16)),
         )
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new("工作台")
                     .size(11.0)
-                    .color(theme::MUTED)
+                    .color(theme::muted_color())
                     .strong(),
             );
             ui.add_space(8.0);
@@ -1490,7 +1569,7 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
                         drive_client::PROTOCOL_VERSION
                     ))
                     .size(11.0)
-                    .color(theme::MUTED),
+                    .color(theme::muted_color()),
                 );
                 let device = Store::open(&app.data_dir)
                     .ok()
@@ -1499,7 +1578,7 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
                 ui.label(
                     egui::RichText::new(device.unwrap_or_else(|| "未初始化".into()))
                         .size(12.0)
-                        .color(theme::MUTED),
+                        .color(theme::muted_color()),
                 );
             });
         });
@@ -1507,7 +1586,7 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::NONE
-                .fill(theme::BG)
+                .fill(theme::bg())
                 .inner_margin(egui::Margin::same(20)),
         )
         .show(ctx, |ui| {
@@ -1528,9 +1607,9 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
 
 fn nav_item(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
     let (fill, color) = if selected {
-        (theme::MINT, theme::MINT_DARK)
+        (theme::mint(), theme::mint_dark())
     } else {
-        (egui::Color32::TRANSPARENT, theme::MUTED)
+        (egui::Color32::TRANSPARENT, theme::muted_color())
     };
     let button = egui::Button::new(egui::RichText::new(label).color(color).strong())
         .fill(fill)
@@ -1562,7 +1641,7 @@ fn page_status(app: &mut GuiApp, ui: &mut egui::Ui) {
                             ui.label(
                                 egui::RichText::new(device_id)
                                     .monospace()
-                                    .color(theme::TEXT),
+                                    .color(theme::text()),
                             );
                         });
                         ui.add_space(8.0);
@@ -1574,7 +1653,7 @@ fn page_status(app: &mut GuiApp, ui: &mut egui::Ui) {
                     }
                     ui.add_space(6.0);
                     egui::Frame::new()
-                        .fill(theme::PANEL_DARK)
+                        .fill(theme::panel_dark())
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(egui::Margin::same(10))
                         .show(ui, |ui| {
@@ -1600,12 +1679,18 @@ fn page_status(app: &mut GuiApp, ui: &mut egui::Ui) {
                         ui.horizontal(|ui| {
                             theme::status_dot(
                                 ui,
-                                if session { theme::MINT } else { theme::WARN },
+                                if session {
+                                    theme::mint()
+                                } else {
+                                    theme::warn()
+                                },
                                 &name,
                             );
                             ui.label(theme::muted(peer_id.clone()));
                             if session {
-                                ui.label(egui::RichText::new("E2E 会话已建立").color(theme::MINT));
+                                ui.label(
+                                    egui::RichText::new("E2E 会话已建立").color(theme::mint()),
+                                );
                             }
                         });
                     }
@@ -1634,7 +1719,11 @@ fn page_status(app: &mut GuiApp, ui: &mut egui::Ui) {
             theme::empty_state(ui, "暂无事件");
         }
         for line in app.events.iter().rev().take(12) {
-            ui.label(egui::RichText::new(line).color(theme::MUTED).size(12.5));
+            ui.label(
+                egui::RichText::new(line)
+                    .color(theme::muted_color())
+                    .size(12.5),
+            );
         }
     });
 }
@@ -1679,7 +1768,7 @@ fn page_devices(app: &mut GuiApp, ui: &mut egui::Ui) {
                     ui.label(
                         egui::RichText::new(header)
                             .size(12.0)
-                            .color(theme::MUTED)
+                            .color(theme::muted_color())
                             .strong(),
                     );
                 }
@@ -1687,14 +1776,14 @@ fn page_devices(app: &mut GuiApp, ui: &mut egui::Ui) {
                 for peer in app.peers.clone() {
                     ui.label(
                         egui::RichText::new(peer.display_name())
-                            .color(theme::TEXT)
+                            .color(theme::text())
                             .strong(),
                     );
                     ui.label(
                         egui::RichText::new(&peer.peer.device_id)
                             .monospace()
                             .size(11.5)
-                            .color(theme::MUTED),
+                            .color(theme::muted_color()),
                     );
                     ui.label(theme::muted(platform::format_ms(
                         peer.last_seen_or_paired(),
@@ -1772,7 +1861,11 @@ fn page_clipboard(app: &mut GuiApp, ui: &mut egui::Ui) {
             theme::empty_state(ui, "暂无记录");
         }
         for line in app.clipboard_records.iter().rev().take(16) {
-            ui.label(egui::RichText::new(line).color(theme::MUTED).size(12.5));
+            ui.label(
+                egui::RichText::new(line)
+                    .color(theme::muted_color())
+                    .size(12.5),
+            );
         }
         ui.add_space(8.0);
         ui.collapsing("回环抑制说明", |ui| {
@@ -1830,7 +1923,7 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
                     ui.label(
                         egui::RichText::new(header)
                             .size(12.0)
-                            .color(theme::MUTED)
+                            .color(theme::muted_color())
                             .strong(),
                     );
                 }
@@ -1843,7 +1936,11 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
                         .filter(|(_, entries)| entries.iter().any(|id| id == &entry.id))
                         .map(|(peer_id, _)| peer_name(app, peer_id))
                         .collect();
-                    ui.label(egui::RichText::new(&entry.name).color(theme::TEXT).strong());
+                    ui.label(
+                        egui::RichText::new(&entry.name)
+                            .color(theme::text())
+                            .strong(),
+                    );
                     ui.label(theme::muted(if entry.version.is_empty() {
                         "-".to_string()
                     } else {
@@ -1887,7 +1984,11 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
             theme::empty_state(ui, "暂无传输记录");
         }
         for line in app.transfer_lines.iter().rev().take(12) {
-            ui.label(egui::RichText::new(line).color(theme::MUTED).size(12.5));
+            ui.label(
+                egui::RichText::new(line)
+                    .color(theme::muted_color())
+                    .size(12.5),
+            );
         }
     });
 }
@@ -1946,7 +2047,7 @@ fn page_vault(app: &mut GuiApp, ui: &mut egui::Ui) {
                     ui.label(
                         egui::RichText::new(header)
                             .size(12.0)
-                            .color(theme::MUTED)
+                            .color(theme::muted_color())
                             .strong(),
                     );
                 }
@@ -1956,9 +2057,9 @@ fn page_vault(app: &mut GuiApp, ui: &mut egui::Ui) {
                         egui::RichText::new(&item.object_id)
                             .monospace()
                             .size(11.5)
-                            .color(theme::MUTED),
+                            .color(theme::muted_color()),
                     );
-                    ui.label(egui::RichText::new(&item.name).color(theme::TEXT));
+                    ui.label(egui::RichText::new(&item.name).color(theme::text()));
                     ui.label(theme::muted(platform::human_bytes(item.size)));
                     ui.label(theme::muted(platform::format_ms(item.expires_at_ms)));
                     if theme::secondary_button(ui, "下载解密") {
@@ -2016,6 +2117,37 @@ fn page_settings(app: &mut GuiApp, ui: &mut egui::Ui) {
         load_settings(app);
     }
     theme::page_header(ui, "设置", Page::Settings.subtitle());
+
+    theme::card_titled(ui, "外观主题", |ui| {
+        ui.label(theme::muted(
+            "「跟随系统」会读取操作系统外观设置并自动切换；修改立即生效，保存在 <数据目录>/gui.json（与 CLI config.json 分离）。",
+        ));
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            for mode in ThemeMode::ALL {
+                let selected = app.theme_mode == mode;
+                if theme::check_mark(ui, selected, mode.label()) && !selected {
+                    app.set_theme_mode(ui.ctx(), mode);
+                }
+            }
+            ui.label(theme::muted(format!(
+                "当前：{}（{}）",
+                app.theme_mode.label(),
+                if theme::is_light() {
+                    "浅色"
+                } else {
+                    "深色"
+                }
+            )));
+        });
+        ui.add_space(4.0);
+        ui.label(theme::muted(match platform::system_prefers_light() {
+            Some(true) => "系统外观：浅色",
+            Some(false) => "系统外观：深色",
+            None => "系统外观：未知（跟随系统时回退深色）",
+        }));
+    });
+
     theme::card_titled(ui, "中继与设备", |ui| {
         egui::Grid::new("settings-conn")
             .num_columns(2)
@@ -2031,7 +2163,9 @@ fn page_settings(app: &mut GuiApp, ui: &mut egui::Ui) {
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.token)
                         .password(true)
-                        .hint_text(egui::RichText::new("服务器共享令牌").color(theme::MUTED))
+                        .hint_text(
+                            egui::RichText::new("服务器共享令牌").color(theme::muted_color()),
+                        )
                         .desired_width(380.0)
                         .margin(egui::vec2(10.0, 8.0)),
                 );
@@ -2147,7 +2281,7 @@ fn page_settings(app: &mut GuiApp, ui: &mut egui::Ui) {
                 egui::RichText::new(app.data_dir.display().to_string())
                     .monospace()
                     .size(12.0)
-                    .color(theme::TEXT),
+                    .color(theme::text()),
             );
             if theme::secondary_button(ui, "打开数据目录")
                 && platform::open_path(&app.data_dir).is_err()
@@ -2206,7 +2340,7 @@ fn page_logs(app: &mut GuiApp, ui: &mut egui::Ui) {
                 egui::RichText::new(path.display().to_string())
                     .monospace()
                     .size(11.0)
-                    .color(theme::MUTED),
+                    .color(theme::muted_color()),
             );
         }
     });
@@ -2243,7 +2377,7 @@ fn draw_dialogs(app: &mut GuiApp, ctx: &egui::Context) {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(egui::RichText::new(format!("确认删除与 {name}（{peer_id}）的配对记录？")).color(theme::TEXT));
+                    ui.label(egui::RichText::new(format!("确认删除与 {name}（{peer_id}）的配对记录？")).color(theme::text()));
                     ui.label(theme::muted(
                         "对端在线会立即收到撤销通知；离线时会在其上线后自动清理。删除后需要重新配对才能恢复同步。",
                     ));
@@ -2278,7 +2412,7 @@ fn draw_dialogs(app: &mut GuiApp, ctx: &egui::Context) {
                 .show(ctx, |ui| {
                     ui.label(
                         egui::RichText::new(format!("确认删除目录条目「{name}」？"))
-                            .color(theme::TEXT),
+                            .color(theme::text()),
                     );
                     ui.label(theme::muted(
                         "将写入墓碑并同步给其他设备，不会删除本机文件。",
@@ -2306,7 +2440,7 @@ fn draw_dialogs(app: &mut GuiApp, ctx: &egui::Context) {
                         egui::RichText::new("drive-sync 桌面客户端")
                             .size(20.0)
                             .strong()
-                            .color(theme::TEXT),
+                            .color(theme::text()),
                     );
                     ui.add_space(6.0);
                     theme::kv(ui, "客户端版本", format!("v{}", env!("CARGO_PKG_VERSION")));
@@ -2340,12 +2474,16 @@ fn draw_toast(app: &mut GuiApp, ctx: &egui::Context) {
     let Some(toast) = &app.toast else {
         return;
     };
-    let color = if toast.ok { theme::MINT } else { theme::DANGER };
+    let color = if toast.ok {
+        theme::mint()
+    } else {
+        theme::danger()
+    };
     egui::TopBottomPanel::bottom("toast")
         .frame(
             egui::Frame::new()
-                .fill(theme::PANEL_DARK)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .fill(theme::panel_dark())
+                .stroke(egui::Stroke::new(1.0, theme::border()))
                 .inner_margin(egui::Margin::symmetric(18, 10)),
         )
         .show(ctx, |ui| {

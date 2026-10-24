@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- PolyBot 深色调色板（跟随系统深色 / 手动深色时生效） -->
+    <color name="bg">#0B0F14</color>
+    <color name="card">#111820</color>
+    <color name="card_alt">#0F151C</color>
+    <color name="input_bg">#0B1016</color>
+    <color name="border">#1E2A33</color>
+    <color name="text_primary">#E6EDF3</color>
+    <color name="text_secondary">#9CA3AF</color>
+    <color name="mint">#22E3B0</color>
+    <color name="mint_on">#06121A</color>
+    <color name="danger">#F87171</color>
+    <color name="transparent">#00000000</color>
+</resources>

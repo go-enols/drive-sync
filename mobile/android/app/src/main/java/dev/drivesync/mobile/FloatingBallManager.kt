@@ -40,34 +40,47 @@ object FloatingBallManager {
             .apply()
     }
 
-    /** 根据偏好与系统权限同步显示状态（幂等）。 */
+    private var lastDark: Boolean? = null
+
+    /** 根据偏好、系统权限与当前明暗同步悬浮球（幂等；主题切换时自动重绘）。 */
     fun syncFromPrefs(context: Context) {
-        if (isEnabled(context) && Settings.canDrawOverlays(context)) {
-            show(context)
-        } else {
+        val enabled = isEnabled(context) && Settings.canDrawOverlays(context)
+        val dark = ThemePrefs.isDark(context)
+        if (!enabled) {
             hide()
+            return
         }
+        if (ball != null && lastDark == dark) return
+        hide()
+        showInternal(context.applicationContext, dark)
     }
 
     fun show(context: Context) {
         if (ball != null) return
-        val app = context.applicationContext
+        showInternal(context.applicationContext, ThemePrefs.isDark(context))
+    }
+
+    private fun showInternal(app: Context, dark: Boolean) {
+        if (ball != null) return
         if (!Settings.canDrawOverlays(app)) return
         val manager = app.getSystemService(WindowManager::class.java) ?: return
         val density = app.resources.displayMetrics.density
         val size = (56 * density).toInt()
+        val fillColor = if (dark) 0xFF22E3B0.toInt() else 0xFF0EA37F.toInt()
+        val onFillColor = if (dark) 0xFF06121A.toInt() else 0xFFFFFFFF.toInt()
+        val strokeColor = if (dark) 0xFF0E5A47.toInt() else 0xFF0B7A5F.toInt()
 
         val view = TextView(app).apply {
             text = "⇄"
             textSize = 26f
             gravity = Gravity.CENTER
-            setTextColor(0xFF06121A.toInt())
+            setTextColor(onFillColor)
             contentDescription = "drive-sync 同步当前剪贴板"
             elevation = 10f * density
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(0xFF22E3B0.toInt())
-                setStroke((1 * density).toInt(), 0xFF0E5A47.toInt())
+                setColor(fillColor)
+                setStroke((1 * density).toInt(), strokeColor)
             }
         }
         val layoutParams = WindowManager.LayoutParams(
@@ -144,6 +157,7 @@ object FloatingBallManager {
             ball = view
             params = layoutParams
             windowManager = manager
+            lastDark = dark
         } catch (_: Exception) {
             ball = null
             params = null
@@ -157,6 +171,7 @@ object FloatingBallManager {
         ball = null
         params = null
         windowManager = null
+        lastDark = null
         if (view != null && manager != null) {
             try {
                 manager.removeView(view)

@@ -2,60 +2,95 @@
 //  Theme.swift
 //  drive-sync iOS
 //
-//  PolyBot 风格主题（深色 + 薄荷绿）。
-//  颜色/圆角/渐变/按钮样式集中在这里，页面只引用 Theme 与 Poly* 组件，
-//  不允许散落硬编码颜色（便于后续统一换肤）。
+//  PolyBot 风格主题（同时支持深色 / 浅色）。
+//  颜色令牌全部为动态 Color（UIColor dynamicProvider），随系统外观或用户在
+//  「设置 → 外观主题」中的选择即时切换；页面只引用 Theme 与 Poly* 组件。
 //
-//  规范：
-//    背景 #0B0F14  卡片 #111820  边框 #1E2A33
-//    主文字 #E6EDF3  次要 #9CA3AF
-//    主色薄荷绿 #22E3B0  危险 #F87171
-//    圆角 10–12pt；主按钮薄荷绿填充深色文字；输入框深色 + 薄荷绿聚焦描边。
+//  调色板：
+//                深色                          浅色
+//    背景        #0B0F14                       #F5F7FA
+//    卡片        #111820                       #FFFFFF
+//    边框        #1E2A33                       #E2E8F0
+//    主文字      #E6EDF3                       #0B1220
+//    次要文字    #9CA3AF                       #64748B
+//    品牌薄荷绿  #22E3B0                       #0EA37F / #10B981
+//    危险        #F87171                       #DC2626
+//
+//  圆角 10–12pt；主按钮薄荷绿填充深色文字；输入框浅/深底 + 薄荷绿聚焦描边。
 //
 
 import SwiftUI
 import UIKit
 
 enum Theme {
-    // MARK: 颜色
+    // MARK: - 动态颜色工具
 
-    static let background = Color(hex: 0x0B0F14)
-    static let card = Color(hex: 0x111820)
-    static let cardElevated = Color(hex: 0x151E27)
-    static let border = Color(hex: 0x1E2A33)
-    static let textPrimary = Color(hex: 0xE6EDF3)
-    static let textSecondary = Color(hex: 0x9CA3AF)
-    static let textTertiary = Color(hex: 0x6B7280)
-    static let mint = Color(hex: 0x22E3B0)
-    static let mintDeep = Color(hex: 0x0FB98A)
-    static let danger = Color(hex: 0xF87171)
-    static let warning = Color(hex: 0xFBBF24)
+    /// 生成随深浅外观自动切换的 Color（SwiftUI 在渲染时按 colorScheme 解析）。
+    static func adaptive(light: UInt32, dark: UInt32) -> Color {
+        Color(uiColor: UIColor.adaptive(light: light, dark: dark))
+    }
 
-    // MARK: 圆角
+    // MARK: - 颜色令牌（深 / 浅两套）
+
+    static let background = adaptive(light: 0xF5F7FA, dark: 0x0B0F14)
+    static let card = adaptive(light: 0xFFFFFF, dark: 0x111820)
+    static let cardElevated = adaptive(light: 0xF1F5F9, dark: 0x151E27)
+    static let border = adaptive(light: 0xE2E8F0, dark: 0x1E2A33)
+    static let textPrimary = adaptive(light: 0x0B1220, dark: 0xE6EDF3)
+    static let textSecondary = adaptive(light: 0x64748B, dark: 0x9CA3AF)
+    static let textTertiary = adaptive(light: 0x64748B, dark: 0x6B7280)
+    static let mint = adaptive(light: 0x0EA37F, dark: 0x22E3B0)
+    static let mintDeep = adaptive(light: 0x0B8A6B, dark: 0x0FB98A)
+    static let danger = adaptive(light: 0xDC2626, dark: 0xF87171)
+    static let warning = adaptive(light: 0xB45309, dark: 0xFBBF24)
+
+    /// 薄荷绿主按钮上的文字：两套主题都用深色文字（对比度最佳）。
+    static let buttonText = Color(hex: 0x07120E)
+
+    // MARK: - 圆角
 
     static let corner: CGFloat = 12
     static let cornerSmall: CGFloat = 10
     static let inputCorner: CGFloat = 10
 
-    // MARK: 渐变
+    // MARK: - 渐变（两套主题）
 
     static let backgroundGradient = LinearGradient(
-        colors: [Color(hex: 0x0B0F14), Color(hex: 0x0C131A), Color(hex: 0x0B0F14)],
+        colors: [
+            adaptive(light: 0xF5F7FA, dark: 0x0B0F14),
+            adaptive(light: 0xEEF2F7, dark: 0x0C131A),
+            adaptive(light: 0xF5F7FA, dark: 0x0B0F14)
+        ],
         startPoint: .top,
         endPoint: .bottom
     )
 
     static let mintGradient = LinearGradient(
-        colors: [mint, Color(hex: 0x1FD9A8)],
+        colors: [
+            adaptive(light: 0x0EA37F, dark: 0x22E3B0),
+            adaptive(light: 0x10B981, dark: 0x1FD9A8)
+        ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
 
     static let logoGradient = LinearGradient(
-        colors: [Color(hex: 0x143D33), Color(hex: 0x0C211C)],
+        colors: [
+            adaptive(light: 0xDCFCE7, dark: 0x143D33),
+            adaptive(light: 0xBBF7D0, dark: 0x0C211C)
+        ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
+
+    // MARK: - UIKit 外观（标签栏 / 导航栏，动态解析）
+
+    static let uiBackground = UIColor.adaptive(light: 0xF5F7FA, dark: 0x0B0F14)
+    static let uiSurface = UIColor.adaptive(light: 0xFFFFFF, dark: 0x111820)
+    static let uiBorder = UIColor.adaptive(light: 0xE2E8F0, dark: 0x1E2A33)
+    static let uiMint = UIColor.adaptive(light: 0x0EA37F, dark: 0x22E3B0)
+    static let uiTextPrimary = UIColor.adaptive(light: 0x0B1220, dark: 0xE6EDF3)
+    static let uiTextSecondary = UIColor.adaptive(light: 0x64748B, dark: 0x9CA3AF)
 }
 
 // MARK: - 十六进制颜色
@@ -70,6 +105,22 @@ extension Color {
     }
 }
 
+extension UIColor {
+    convenience init(hex: UInt32, alpha: CGFloat = 1.0) {
+        let red = CGFloat((hex >> 16) & 0xFF) / 255.0
+        let green = CGFloat((hex >> 8) & 0xFF) / 255.0
+        let blue = CGFloat(hex & 0xFF) / 255.0
+        self.init(red: red, green: green, blue: blue, alpha: alpha)
+    }
+
+    /// 随深浅外观自动切换的 UIColor（用于 UITabBarAppearance 等 UIKit 外观）。
+    static func adaptive(light: UInt32, dark: UInt32) -> UIColor {
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
+        }
+    }
+}
+
 // MARK: - App 信息（品牌栏版本徽章用）
 
 enum AppInfo {
@@ -79,7 +130,7 @@ enum AppInfo {
         if let shortVersion, !shortVersion.isEmpty {
             return shortVersion
         }
-        return "0.3.0"
+        return "0.3.1"
     }()
 
     static var versionBadge: String { "v\(version)" }
@@ -92,7 +143,7 @@ struct PolyPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(Theme.background)
+            .foregroundStyle(Theme.buttonText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 13)
             .background(
@@ -104,7 +155,7 @@ struct PolyPrimaryButtonStyle: ButtonStyle {
     }
 }
 
-/// 次按钮：深色底 + 细边框 + 主文字色。
+/// 次按钮：卡片浮层底 + 细边框 + 主文字色。
 struct PolySecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -160,7 +211,7 @@ struct PolyLinkButtonStyle: ButtonStyle {
 // MARK: - 常用修饰
 
 extension View {
-    /// 全屏深色背景（含安全区）。
+    /// 全屏背景（深/浅主题渐变，含安全区）。
     func polyBackground() -> some View {
         background(Theme.backgroundGradient.ignoresSafeArea())
     }

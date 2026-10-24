@@ -1,17 +1,18 @@
 package dev.drivesync.mobile
 
-import android.app.Activity
 import android.content.ClipboardManager
 import android.os.Bundle
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 
 /**
  * 透明“一键同步”页：由通知 Action 或悬浮同步球拉起。
  *
  * Android 10+ 禁止后台应用读剪贴板（普通权限无解）；本 Activity 取得前台焦点后
  * 读取剪贴板 → `dm_send_clipboard_text` → 自动关闭，用户只需点一次。
+ * 使用 AppCompatActivity + Theme.DriveSync.Transparent，保证跟随用户深/浅色偏好。
  */
-class ClipboardQuickActivity : Activity() {
+class ClipboardQuickActivity : AppCompatActivity() {
     private var handled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {

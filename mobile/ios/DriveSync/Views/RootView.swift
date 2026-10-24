@@ -2,8 +2,9 @@
 //  RootView.swift
 //  drive-sync iOS
 //
-//  全局框架：深色背景 + 四个 Tab（连接 / 配对 / 同步 / 目录）+ Toast + 首次引导。
-//  主题规范见 Theme/Theme.swift（PolyBot：深色 + 薄荷绿）。
+//  全局框架：主题背景 + 五个 Tab（连接 / 配对 / 同步 / 目录 / 设置）+ Toast + 首次引导。
+//  主题规范见 Theme/Theme.swift（PolyBot：深色/浅色双主题，薄荷绿主色）。
+//  外观主题由 AppModel.preferredColorScheme 驱动（跟随系统 / 深色 / 浅色）。
 //
 
 import SwiftUI
@@ -39,8 +40,16 @@ struct RootView: View {
                     .tabItem {
                         Label("目录", systemImage: "square.stack.3d.up")
                     }
+
+                SettingsView()
+                    .tag(AppModel.Tab.settings)
+                    .tabItem {
+                        Label("设置", systemImage: "gearshape")
+                    }
             }
             .tint(Theme.mint)
+            // 让系统管理的标签栏跟随当前外观（nil = 跟随系统）。
+            .toolbarColorScheme(model.preferredColorScheme, for: .tabBar)
         }
         .overlay(alignment: .top) {
             ToastView()
@@ -48,6 +57,7 @@ struct RootView: View {
         .fullScreenCover(isPresented: $model.showOnboarding) {
             OnboardingView(mode: .firstRun)
                 .environmentObject(model)
+                .preferredColorScheme(model.preferredColorScheme)
         }
         .alert(
             "提示",
@@ -66,6 +76,7 @@ struct RootView: View {
         } message: {
             Text(model.errorText ?? "")
         }
-        .preferredColorScheme(.dark)
+        // nil = 跟随系统；.light / .dark = 用户在设置页手动指定，立即生效。
+        .preferredColorScheme(model.preferredColorScheme)
     }
 }

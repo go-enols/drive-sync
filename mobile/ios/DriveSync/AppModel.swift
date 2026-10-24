@@ -26,6 +26,47 @@ final class AppModel: ObservableObject {
         case pairing
         case sync
         case catalog
+        case settings
+    }
+
+    /// 外观主题：跟随系统（默认）/ 深色 / 浅色；持久化到 UserDefaults。
+    enum AppearanceMode: String, CaseIterable, Equatable {
+        case system
+        case light
+        case dark
+
+        var title: String {
+            switch self {
+            case .system: return "跟随系统"
+            case .light: return "浅色"
+            case .dark: return "深色"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .system: return "随 iOS 系统外观自动切换"
+            case .light: return "浅色背景（#F5F7FA）"
+            case .dark: return "深色背景（#0B0F14）"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .system: return "circle.lefthalf.filled"
+            case .light: return "sun.max.fill"
+            case .dark: return "moon.fill"
+            }
+        }
+
+        /// 传给 `.preferredColorScheme`：nil = 跟随系统。
+        var colorScheme: ColorScheme? {
+            switch self {
+            case .system: return nil
+            case .light: return .light
+            case .dark: return .dark
+            }
+        }
     }
 
     /// 前台连接状态机：未初始化 → 未连接 → 连接中 → 已连接；后台暂停。
@@ -121,6 +162,20 @@ final class AppModel: ObservableObject {
     // MARK: - 界面状态
 
     @Published var selectedTab: Tab = .connect
+    /// 外观主题（跟随系统 / 深色 / 浅色），默认跟随系统。
+    @Published private(set) var appearanceMode: AppearanceMode = .system
+
+    /// 根视图 `.preferredColorScheme` 的取值：nil 表示跟随系统。
+    var preferredColorScheme: ColorScheme? { appearanceMode.colorScheme }
+
+    /// 切换外观主题（立即生效并持久化）。
+    func setAppearanceMode(_ mode: AppearanceMode) {
+        guard appearanceMode != mode else { return }
+        appearanceMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: DefaultsKey.appearanceMode)
+        appendLog("外观主题已切换为「\(mode.title)」", level: .info)
+    }
+
     @Published var relayURL: String = ""
     @Published var accessToken: String = ""
     @Published var deviceName: String = UIDevice.current.name
@@ -932,6 +987,10 @@ final class AppModel: ObservableObject {
         autoSyncEnabled = defaults.object(forKey: DefaultsKey.autoSyncEnabled) as? Bool ?? true
         autoApplyReceivedEnabled = defaults.object(forKey: DefaultsKey.autoApplyReceived) as? Bool ?? true
         onboardingCompleted = defaults.bool(forKey: DefaultsKey.onboardingCompleted)
+        if let rawAppearance = defaults.string(forKey: DefaultsKey.appearanceMode),
+           let savedAppearance = AppearanceMode(rawValue: rawAppearance) {
+            appearanceMode = savedAppearance
+        }
     }
 
     private func persistSettings() {
@@ -969,6 +1028,7 @@ private enum DefaultsKey {
     static let autoSyncEnabled = "dev.drivesync.mobile.autoSyncEnabled"
     static let autoApplyReceived = "dev.drivesync.mobile.autoApplyReceived"
     static let onboardingCompleted = "dev.drivesync.mobile.onboardingCompleted"
+    static let appearanceMode = "dev.drivesync.mobile.appearanceMode"
 }
 
 extension String {

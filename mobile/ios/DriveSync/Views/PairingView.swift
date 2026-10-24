@@ -68,7 +68,7 @@ struct PairingView: View {
                         HStack(spacing: 8) {
                             if model.pairingBusy {
                                 ProgressView()
-                                    .tint(Theme.background)
+                                    .tint(Theme.buttonText)
                             }
                             Text(model.pairingBusy
                                  ? "正在生成配对码…"
@@ -106,7 +106,7 @@ struct PairingView: View {
                         HStack(spacing: 8) {
                             if model.pairingBusy {
                                 ProgressView()
-                                    .tint(Theme.background)
+                                    .tint(Theme.buttonText)
                             }
                             Text(model.pairingBusy ? "正在配对（最多约 130 秒）…" : "加入配对")
                         }

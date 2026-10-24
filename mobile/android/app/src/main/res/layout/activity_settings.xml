@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <include layout="@layout/view_brand_bar" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnBack"
+                style="@style/Widget.DriveSync.Button.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="← 返回" />
+
+            <TextView
+                style="@style/Text.DriveSync.Section"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:text="设置" />
+        </LinearLayout>
+
+        <!-- ================= 外观主题 ================= -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/Text.DriveSync.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="外观主题" />
+
+            <TextView
+                style="@style/Text.DriveSync.Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="PolyBot 风格同时提供深色与浅色两套配色；切换立即生效并记住选择。" />
+
+            <RadioGroup
+                android:id="@+id/rgTheme"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical">
+
+                <com.google.android.material.radiobutton.MaterialRadioButton
+                    android:id="@+id/rbSystem"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:text="跟随系统（默认）"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.radiobutton.MaterialRadioButton
+                    android:id="@+id/rbDark"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="深色"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.radiobutton.MaterialRadioButton
+                    android:id="@+id/rbLight"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="浅色"
+                    android:textColor="@color/text_primary" />
+            </RadioGroup>
+
+            <TextView
+                style="@style/Text.DriveSync.Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="深色：#0B0F14 背景 / #22E3B0 主色；浅色：#F5F7FA 背景 / #0EA37F 主色。状态栏、导航栏、悬浮球与通知同步适配。" />
+        </LinearLayout>
+
+        <!-- ================= 权限 ================= -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/Text.DriveSync.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="权限与后台同步" />
+
+            <TextView
+                style="@style/Text.DriveSync.Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="通知、电池优化豁免、悬浮窗、开机自启均在 App 内引导，无需 adb/root。" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnOpenPermissions"
+                style="@style/Widget.DriveSync.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="打开权限与后台同步" />
+        </LinearLayout>
+
+        <!-- ================= 关于 ================= -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/Text.DriveSync.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="关于" />
+
+            <TextView
+                style="@style/Text.DriveSync.Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="drive-sync v0.3.1 · 端到端加密 · 中继只转发密文" />
+
+            <TextView
+                style="@style/Text.DriveSync.Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="剪贴板：前台自动同步；后台接收自动；后台发送点通知/悬浮球一键完成。" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/Text.DriveSync.Label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="center"
+            android:text="drive-sync v0.3.1 · 深色 / 浅色 · 无 adb / root 依赖" />
+
+    </LinearLayout>
+</ScrollView>

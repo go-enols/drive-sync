@@ -47,7 +47,6 @@ struct OnboardingView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled(mode == .firstRun)
         .task {
             await model.refreshNotificationPermission()

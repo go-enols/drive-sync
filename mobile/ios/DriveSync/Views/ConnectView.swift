@@ -66,7 +66,7 @@ struct ConnectView: View {
                             HStack(spacing: 8) {
                                 if model.connecting {
                                     ProgressView()
-                                        .tint(Theme.background)
+                                        .tint(Theme.buttonText)
                                 }
                                 Text(model.connecting ? "连接中…" : "保存配置并连接")
                             }
@@ -154,6 +154,7 @@ struct ConnectView: View {
         .sheet(isPresented: $showPermissions) {
             OnboardingView(mode: .permissions)
                 .environmentObject(model)
+                .preferredColorScheme(model.preferredColorScheme)
         }
     }
 

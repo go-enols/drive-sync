@@ -167,6 +167,7 @@ struct SyncView: View {
         .sheet(isPresented: $showLogs) {
             EventLogView()
                 .environmentObject(model)
+                .preferredColorScheme(model.preferredColorScheme)
         }
     }
 

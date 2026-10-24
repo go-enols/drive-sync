@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DriveSync" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- PolyBot 深色 + 薄荷绿 -->
+    <style name="Theme.DriveSync.Base" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- PolyBot 语义色：@color 资源在 values/ 与 values-night/ 中各有一套，随 DayNight 自动切换 -->
         <item name="colorPrimary">@color/mint</item>
         <item name="colorOnPrimary">@color/mint_on</item>
         <item name="colorPrimaryContainer">@color/card</item>
@@ -22,15 +22,20 @@
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
-    <!-- 透明页面：通知 Action / 悬浮球读取剪贴板（extends framework Activity） -->
-    <style name="Theme.DriveSync.Transparent" parent="android:Theme.Translucent.NoTitleBar">
+    <!-- 浅色（默认）：状态栏/导航栏用深色图标 -->
+    <style name="Theme.DriveSync" parent="Theme.DriveSync.Base">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <!-- 透明一键同步页：继承当前明暗主题的配色与系统栏样式 -->
+    <style name="Theme.DriveSync.Transparent" parent="Theme.DriveSync">
+        <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:backgroundDimEnabled">true</item>
-        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 
     <style name="Text.DriveSync.Section" parent="TextAppearance.Material3.TitleMedium">

@@ -1,15 +1,15 @@
 package dev.drivesync.mobile
 
 import android.app.Application
-import androidx.appcompat.app.AppCompatDelegate
 
 /**
- * 应用入口：强制 PolyBot 深色主题（不随系统浅色模式切换），并初始化进程级状态。
+ * 应用入口：按用户外观偏好应用 DayNight（跟随系统 / 深色 / 浅色），并初始化进程级状态。
+ * 默认跟随系统；偏好与切换在「设置 → 外观主题」中调整。
  */
 class DriveSyncApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+        ThemePrefs.apply(this)
         AppState.init(this)
     }
 }

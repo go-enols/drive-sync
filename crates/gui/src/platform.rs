@@ -354,3 +354,104 @@ pub fn human_bytes(bytes: u64) -> String {
         format!("{:.2} GiB", value / (KIB * KIB * KIB))
     }
 }
+
+/// 探测系统是否偏好浅色外观。
+///
+/// - Windows：`HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize` 的
+///   `AppsUseLightTheme`（REG_DWORD，1=浅色）；
+/// - Linux：`gsettings get org.gnome.desktop.interface color-scheme` / `gtk-theme`，
+///   以及 `GTK_THEME` / `COLORSCHEME` 环境变量；
+/// - macOS：`defaults read -g AppleInterfaceStyle`（存在且为 Dark 表示深色）。
+///
+/// 读取失败返回 `None`，调用方回退深色；不会 panic。
+pub fn system_prefers_light() -> Option<bool> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = std::process::Command::new("reg")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                "/v",
+                "AppsUseLightTheme",
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        for token in text.split_whitespace() {
+            if let Some(value) = token.strip_prefix("0x") {
+                return Some(value != "0");
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        fn run(command: &str, args: &[&str]) -> Option<String> {
+            let output = std::process::Command::new(command)
+                .args(args)
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            Some(String::from_utf8_lossy(&output.stdout).to_lowercase())
+        }
+        if let Some(scheme) = run(
+            "gsettings",
+            ["get", "org.gnome.desktop.interface", "color-scheme"].as_slice(),
+        ) {
+            if scheme.contains("light") {
+                return Some(true);
+            }
+            if scheme.contains("dark") {
+                return Some(false);
+            }
+        }
+        if let Some(theme) = run(
+            "gsettings",
+            ["get", "org.gnome.desktop.interface", "gtk-theme"].as_slice(),
+        ) {
+            if theme.contains("dark") {
+                return Some(false);
+            }
+            if theme.contains("light") {
+                return Some(true);
+            }
+        }
+        for variable in ["GTK_THEME", "COLORSCHEME"] {
+            if let Ok(value) = std::env::var(variable) {
+                let value = value.to_lowercase();
+                if value.contains("light") {
+                    return Some(true);
+                }
+                if value.contains("dark") {
+                    return Some(false);
+                }
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleInterfaceStyle"])
+            .output()
+            .ok()?;
+        // 键不存在（标准浅色模式）时 defaults 返回非 0，按浅色处理。
+        let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        if output.status.success() {
+            Some(!text.contains("dark"))
+        } else if text.contains("does not exist") {
+            Some(true)
+        } else {
+            None
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}

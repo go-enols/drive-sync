@@ -5,8 +5,9 @@
 //  App 入口。SwiftUI 生命周期；scenePhase 驱动「前台连接 / 后台断开」，
 //  因为 iOS 不允许后台常驻 WebSocket（详见 docs/mobile-ios.md）。
 //
-//  UI 统一为 PolyBot 深色主题（深色背景 + 薄荷绿主色），
-//  这里额外配置 UIKit 的标签栏/导航栏外观，保证系统控件也是深色风格。
+//  UI 为 PolyBot 双主题（深色/浅色 + 薄荷绿主色）：外观由 RootView 的
+//  `.preferredColorScheme` 控制（跟随系统 / 深色 / 浅色），这里配置的
+//  UIKit 标签栏/导航栏外观全部使用动态颜色，会随外观自动解析。
 //
 
 import SwiftUI
@@ -25,7 +26,6 @@ struct DriveSyncApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(model)
-                .preferredColorScheme(.dark)
                 .task {
                     await model.bootstrap()
                 }
@@ -35,23 +35,24 @@ struct DriveSyncApp: App {
         }
     }
 
-    /// 深色标签栏 / 导航栏外观（PolyBot 主题：背景 #0B0F14、边框 #1E2A33、主色薄荷绿）。
+    /// 动态标签栏 / 导航栏外观：颜色来自 Theme 的动态调色板，
+    /// 深浅模式切换时由系统按 trait 自动重解析（无需重建 appearance）。
     private static func configureGlobalAppearance() {
         let tabAppearance = UITabBarAppearance()
         tabAppearance.configureWithOpaqueBackground()
-        tabAppearance.backgroundColor = UIColor(Theme.background)
-        tabAppearance.shadowColor = UIColor(Theme.border)
+        tabAppearance.backgroundColor = Theme.uiBackground
+        tabAppearance.shadowColor = Theme.uiBorder
         UITabBar.appearance().standardAppearance = tabAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabAppearance
-        UITabBar.appearance().tintColor = UIColor(Theme.mint)
-        UITabBar.appearance().unselectedItemTintColor = UIColor(Theme.textTertiary)
+        UITabBar.appearance().tintColor = Theme.uiMint
+        UITabBar.appearance().unselectedItemTintColor = Theme.uiTextSecondary
 
         let navigationAppearance = UINavigationBarAppearance()
         navigationAppearance.configureWithOpaqueBackground()
-        navigationAppearance.backgroundColor = UIColor(Theme.background)
-        navigationAppearance.shadowColor = UIColor(Theme.border)
-        navigationAppearance.titleTextAttributes = [.foregroundColor: UIColor(Theme.textPrimary)]
-        navigationAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor(Theme.textPrimary)]
+        navigationAppearance.backgroundColor = Theme.uiBackground
+        navigationAppearance.shadowColor = Theme.uiBorder
+        navigationAppearance.titleTextAttributes = [.foregroundColor: Theme.uiTextPrimary]
+        navigationAppearance.largeTitleTextAttributes = [.foregroundColor: Theme.uiTextPrimary]
         UINavigationBar.appearance().standardAppearance = navigationAppearance
         UINavigationBar.appearance().scrollEdgeAppearance = navigationAppearance
         UINavigationBar.appearance().compactAppearance = navigationAppearance

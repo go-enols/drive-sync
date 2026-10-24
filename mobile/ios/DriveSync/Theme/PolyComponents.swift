@@ -11,7 +11,7 @@ import UIKit
 
 // MARK: - 屏幕容器
 
-/// 统一页面容器：深色渐变背景 + 卡片纵向间距 + 隐藏滚动指示器。
+/// 统一页面容器：主题渐变背景（深/浅自动）+ 卡片纵向间距 + 隐藏滚动指示器。
 struct PolyScreen<Content: View>: View {
     private let content: Content
 
@@ -30,9 +30,6 @@ struct PolyScreen<Content: View>: View {
         }
         .scrollIndicators(.hidden)
         .background(Theme.backgroundGradient.ignoresSafeArea())
-        .toolbarBackground(Theme.background, for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
-        .toolbarColorScheme(.dark, for: .tabBar)
     }
 }
 

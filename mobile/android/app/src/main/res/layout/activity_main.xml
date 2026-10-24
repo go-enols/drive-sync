@@ -299,6 +299,14 @@
                 android:layout_marginTop="10dp"
                 android:text="权限与后台同步" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSettings"
+                style="@style/Widget.DriveSync.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="设置与外观主题" />
+
             <TextView
                 style="@style/Text.DriveSync.Label"
                 android:layout_width="match_parent"
@@ -369,7 +377,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:gravity="center"
-            android:text="drive-sync v0.3.0 · 端到端加密 · 无 adb / root 依赖" />
+            android:text="drive-sync v0.3.1 · 端到端加密 · 无 adb / root 依赖" />
 
     </LinearLayout>
 </ScrollView>

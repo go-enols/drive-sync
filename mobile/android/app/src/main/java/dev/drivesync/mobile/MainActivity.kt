@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSendClipboard: MaterialButton
     private lateinit var btnRefresh: MaterialButton
     private lateinit var btnPermissions: MaterialButton
+    private lateinit var btnSettings: MaterialButton
     private lateinit var swPause: SwitchMaterial
 
     private val prefs by lazy {
@@ -107,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         btnSendClipboard = findViewById(R.id.btnSendClipboard)
         btnRefresh = findViewById(R.id.btnRefresh)
         btnPermissions = findViewById(R.id.btnPermissions)
+        btnSettings = findViewById(R.id.btnSettings)
         swPause = findViewById(R.id.swPause)
     }
 
@@ -120,6 +122,9 @@ class MainActivity : AppCompatActivity() {
         btnRefresh.setOnClickListener { refreshAll() }
         btnPermissions.setOnClickListener {
             startActivity(Intent(this, PermissionsActivity::class.java))
+        }
+        btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
         swPause.setOnCheckedChangeListener { _, checked ->
             AppState.paused = checked

@@ -1,14 +1,14 @@
-# drive-sync Android 端（v0.3.0：App 内权限引导 · 一键同步 · PolyBot 深色 UI）
+# drive-sync Android 端（v0.3.1：App 内权限引导 · 一键同步 · PolyBot 深色/浅色 UI）
 
-Android 端是**可侧载 APK**：单 Activity 控制台 + 前台服务保持同步，UI 采用 PolyBot 风格
-（深色 `#0B0F14` + 薄荷绿 `#22E3B0`）。所有需要的权限都在 **App 内引导申请**，
-**不需要 adb 指令、不需要 root**。
+Android 端是**可侧载 APK**：单 Activity 控制台 + 前台服务保持同步，UI 采用 PolyBot 风格，
+**同时支持深色与浅色两套配色**（默认跟随系统，也可在「设置 → 外观主题」手动选择）。
+所有需要的权限都在 **App 内引导申请**，**不需要 adb 指令、不需要 root**。
 
-本机 Windows 无 Android SDK/NDK，APK 由 GitHub Actions 构建；Rust 端（`crates/mobile-core`）
-只要求 `cargo check -p drive-mobile` 通过（本版本 Rust/JNI 层无改动）。
+Rust 端（`crates/mobile-core`）本版本无改动；APK 由 GitHub Actions 构建，
+本地也可用 Android SDK/NDK 等价构建（见 §9）。
 
 - applicationId：`dev.drivesync.mobile`
-- minSdk 29（Android 10）· targetSdk 36 · compileSdk 36 · 版本 `0.3.0`
+- minSdk 29（Android 10）· targetSdk 36 · compileSdk 36 · 版本 `0.3.1`（versionCode 4）
 - 原生库：`libdrive_mobile.so`（Rust cdylib + JNI 壳，ABI：arm64-v8a / armeabi-v7a / x86_64）
 
 ## 1. 获取 APK
@@ -18,7 +18,7 @@ Android 端是**可侧载 APK**：单 Activity 控制台 + 前台服务保持同
 1. 打开仓库 Actions → **Android APK** 工作流；
 2. `Run workflow`（workflow_dispatch）或在 `main` 分支 push 触发；
 3. 构建完成后下载 artifact **`drive-sync-android-debug.apk`**
-   （artifact 内含 `drive-sync-android-debug.apk` 与版本化文件 `drive-sync-v0.3.0-android-debug.apk`，
+   （artifact 内含 `drive-sync-android-debug.apk` 与版本化文件 `drive-sync-v0.3.1-android-debug.apk`，
    debug 签名，可直接侧载）。
 
 工作流：安装 Rust Android targets + Android SDK 36 + NDK r27c + `cargo-ndk`，
@@ -126,23 +126,30 @@ gradle wrapper --gradle-version 8.13   # 仓库未提交 gradle-wrapper.jar 时�
 | 悬浮球 | 需要悬浮窗权限；部分 ROM 会限制悬浮窗显示 |
 | 电池优化 | 未豁免时后台服务可能被更快冻结；页面内有引导 |
 | 配对并发 | 配对会临时暂停同步会话（约 1~2 秒），期间剪切板发送返回 -3 |
-| 无法本机验证 | Windows 无 Android SDK/NDK，APK 行为以 CI 构建产物 + 真机实测为准 |
+| 无法真机验证 | 构建/资源/JNI 已在本机等价验证，但 UI、权限弹窗、通知/悬浮球交互需真机实测 |
 
-## 7. PolyBot 风格 UI
+## 7. PolyBot 风格 UI（深色 / 浅色）
 
-| 元素 | 取值 |
-|---|---|
-| 背景 | `#0B0F14` |
-| 卡片 | `#111820`（圆角 12dp，1dp 边框 `#1E2A33`） |
-| 主文字 / 次要文字 | `#E6EDF3` / `#9CA3AF` |
-| 主色（按钮/高亮/选中） | 薄荷绿 `#22E3B0`（按钮文字 `#06121A`） |
-| 危险色 | `#F87171` |
-| 顶部品牌栏 | 圆角薄荷绿 logo + `drive-sync` + `v0.3.0` 徽章 |
-| 输入框 | 深色 `#0B1016`，聚焦时薄荷绿边框 |
-| 通知 | 薄荷绿强调色 + 深色图标，常驻通知带一键 Action |
+入口：主页「设置与外观主题」→ 设置页「外观主题」：**跟随系统（默认）/ 深色 / 浅色**。
+选择写入 SharedPreferences（键 `theme_mode`）并立即生效：
+`AppCompatDelegate.setDefaultNightMode` 会自动重建已打开页面，资源目录
+`values/colors.xml`（浅色）与 `values-night/colors.xml`（深色）随之切换，
+状态栏/导航栏图标颜色也由 `Theme.DriveSync`（values / values-night）跟随。
 
-覆盖页面：主页（连接/配对/剪切板/设备/目录）、权限与后台同步页、透明一键同步页、
-悬浮同步球与通知样式。
+| 元素 | 深色 | 浅色 |
+|---|---|---|
+| 背景 | `#0B0F14` | `#F5F7FA` |
+| 卡片 | `#111820`（边框 `#1E2A33`） | `#FFFFFF`（边框 `#E2E8F0`） |
+| 主文字 / 次要文字 | `#E6EDF3` / `#9CA3AF` | `#0B1220` / `#64748B` |
+| 主色（按钮/高亮/选中） | 薄荷绿 `#22E3B0`（按钮文字 `#06121A`） | 薄荷绿 `#0EA37F`（按钮文字 `#FFFFFF`） |
+| 危险色 | `#F87171` | `#DC2626` |
+| 输入框 | `#0B1016`，聚焦薄荷绿边框 | `#F8FAFC`，聚焦薄荷绿边框 |
+| 顶部品牌栏 | 圆角薄荷绿 logo + `drive-sync` + `v0.3.1` 徽章 | 同左 |
+| 通知色 | 薄荷绿 `#22E3B0` 强调 | 薄荷绿 `#0EA37F` 强调 |
+| 状态栏 / 导航栏 | 背景色 + 浅色图标 | 背景色 + 深色图标 |
+
+覆盖页面：主页（连接/配对/剪切板/设备/目录）、设置页（外观主题/权限入口/关于）、
+权限与后台同步页、透明一键同步页、悬浮同步球与通知样式。
 
 ## 8. 架构与代码位置
 
@@ -155,6 +162,8 @@ mobile/android/                Gradle 工程（Kotlin）
 │   ├── Native.kt              JNI 绑定（object Native 的 external fun）
 │   ├── MainActivity.kt        主页：连接/配对/剪切板/设备/目录 + 首次引导
 │   ├── PermissionsActivity.kt 权限状态页：通知/电池/悬浮窗/开机自启 + 能力边界
+│   ├── SettingsActivity.kt    设置页：外观主题（跟随系统/深色/浅色）+ 权限入口 + 关于
+│   ├── ThemePrefs.kt          主题偏好持久化 + AppCompat night mode + 非 Activity 组件配色判断
 │   ├── ClipboardQuickActivity.kt 透明一键同步页（通知 Action / 悬浮球）
 │   ├── FloatingBallManager.kt 悬浮同步球（授权悬浮窗后可用）
 │   ├── SyncService.kt         dataSync 前台服务（常驻通知 + 一键 Action）
@@ -163,7 +172,7 @@ mobile/android/                Gradle 工程（Kotlin）
 │   ├── AppState.kt            进程级状态、远端剪贴板写回、去重/回环抑制
 │   ├── ClipboardSync.kt       900ms 前台自动轮询发送
 │   └── NotificationHelper.kt  深色/薄荷绿通知、一键同步 Action
-└── app/src/main/res/          PolyBot 深色主题、卡片/徽章/logo/悬浮球 drawable
+└── app/src/main/res/          PolyBot 深色/浅色主题（values + values-night）、卡片/徽章/logo/悬浮球 drawable
 .github/workflows/android.yml  CI：Rust .so → assembleDebug → APK artifact
 ```
 
@@ -173,25 +182,27 @@ JNI 符号与 Kotlin `Native` 方法一一对应：`Java_dev_drivesync_mobile_Na
 ## 9. 构建与验收
 
 - CI：`.github/workflows/android.yml`（workflow_dispatch + push），产物 artifact
-  `drive-sync-android-debug.apk`（含 `drive-sync-v0.3.0-android-debug.apk`）；
+  `drive-sync-android-debug.apk`（含 `drive-sync-v0.3.1-android-debug.apk`）；
 - Rust：`cargo check -p drive-mobile` 必须通过（本版本 Android 侧改动不涉及 Rust；已验证 exit 0）；
 - 真机验收清单：安装 → 首次引导 → 权限页逐项授权 → 配置 relay → 连接 → 桌面端配对 →
   复制文本（前台自动同步）→ 退到后台在桌面端复制（手机通知出现并自动写剪贴板）→
-  点通知「同步当前剪贴板」/悬浮球（后台发送成功）→ 目录列表展示。
+  点通知「同步当前剪贴板」/悬浮球（后台发送成功）→ 目录列表展示 →
+  设置页切换深色/浅色/跟随系统（立即生效，通知与悬浮球同步换色）。
 
-### 本版本（v0.3.0）本地等价构建验证
+### 本版本（v0.3.1）本地等价构建验证
 
 已在 Windows 上使用 **Android SDK 36 / build-tools 36 / NDK 27 + Gradle 8.14.3 + JDK 21**
 跑通与 CI 等价的完整构建（CI 使用 Gradle 8.13 + JDK 17 + NDK r27c，命令一致）：
 
 - `cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 --platform 29 -o ... build -p drive-mobile --release`
   → 3 个 ABI 的 `libdrive_mobile.so` 构建成功；
-- `gradle assembleDebug` → **BUILD SUCCESSFUL**，APK 约 22.7 MB；
-- `aapt2 dump badging` 校验：`dev.drivesync.mobile` / `versionCode 3` / `versionName 0.3.0` /
+- `gradle assembleDebug` → **BUILD SUCCESSFUL**，APK 约 22.8 MB；
+- `aapt2 dump badging` 校验：`dev.drivesync.mobile` / `versionCode 4` / `versionName 0.3.1` /
   minSdk 29 / targetSdk 36 / MainActivity 可启动，权限清单包含通知、前台服务(dataSync)、
   开机自启、悬浮窗、电池优化豁免；
 - APK 内含 3 个 ABI 的 `libdrive_mobile.so`，导出 15 个
   `Java_dev_drivesync_mobile_Native_*` JNI 符号与 16 个 `dm_*` C ABI 符号（已用 llvm-nm 核对）。
 - 本机构建产出的临时 APK（不入库，供真机安装验收）：
-  `target/android-apk/drive-sync-android-debug.apk`；CI push 后会重新构建并上传 artifact。
+  `target/android-apk/drive-sync-android-debug.apk`（另有 `drive-sync-v0.3.1-android-debug.apk`）；
+  CI push 后会重新构建并上传 artifact。
 

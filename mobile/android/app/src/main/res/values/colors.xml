@@ -1,15 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- PolyBot 深色 + 薄荷绿 调色板 -->
-    <color name="bg">#0B0F14</color>
-    <color name="card">#111820</color>
-    <color name="card_alt">#0F151C</color>
-    <color name="input_bg">#0B1016</color>
-    <color name="border">#1E2A33</color>
-    <color name="text_primary">#E6EDF3</color>
-    <color name="text_secondary">#9CA3AF</color>
-    <color name="mint">#22E3B0</color>
-    <color name="mint_on">#06121A</color>
-    <color name="danger">#F87171</color>
+    <!--
+      PolyBot 浅色调色板（默认 / 浅色模式）。
+      深色模式在 values-night/colors.xml 中覆盖同名颜色，DayNight 自动切换。
+    -->
+    <color name="bg">#F5F7FA</color>
+    <color name="card">#FFFFFF</color>
+    <color name="card_alt">#F1F5F9</color>
+    <color name="input_bg">#F8FAFC</color>
+    <color name="border">#E2E8F0</color>
+    <color name="text_primary">#0B1220</color>
+    <color name="text_secondary">#64748B</color>
+    <color name="mint">#0EA37F</color>
+    <color name="mint_on">#FFFFFF</color>
+    <color name="danger">#DC2626</color>
     <color name="transparent">#00000000</color>
 </resources>

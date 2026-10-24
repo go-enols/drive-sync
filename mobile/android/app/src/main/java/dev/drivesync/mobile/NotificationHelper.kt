@@ -7,12 +7,12 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 
 /**
  * 通知：前台服务常驻状态 + 收到远端剪切板提醒。
  *
- * PolyBot 风格：薄荷绿强调色 + 深色图标；常驻通知带“同步当前剪贴板”一键 Action
+ * PolyBot 风格：薄荷绿强调色 + 白色通知图标；深/浅色模式下使用对应对比度的薄荷绿
+ * （深色 #22E3B0 / 浅色 #0EA37F）。常驻通知带“同步当前剪贴板”一键 Action
  * （后台无法自动读剪贴板时的官方替代方案，无需 adb/appops）。
  */
 object NotificationHelper {
@@ -43,7 +43,9 @@ object NotificationHelper {
         manager.createNotificationChannel(clipboard)
     }
 
-    private fun accent(context: Context): Int = ContextCompat.getColor(context, R.color.mint)
+    /** 按当前主题选择薄荷绿（浅色模式用更深的 #0EA37F 保证对比度）。 */
+    private fun accent(context: Context): Int =
+        if (ThemePrefs.isDark(context)) 0xFF22E3B0.toInt() else 0xFF0EA37F.toInt()
 
     private fun openAppIntent(context: Context): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)

@@ -36,6 +36,12 @@
             android:exported="false"
             android:label="权限与后台同步" />
 
+        <!-- 设置页：外观主题（跟随系统/深色/浅色）+ 权限入口 + 关于 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="设置" />
+
         <!-- 透明“一键同步”页：通知 Action / 悬浮球拉起，取得焦点后读取剪贴板 -->
         <activity
             android:name=".ClipboardQuickActivity"

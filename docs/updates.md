@@ -383,3 +383,44 @@ chmod 755 ~/.local/share/drive-sync/drive-sync
 - 更新清单地址默认指向 GitHub；完全离线/内网部署需自建清单镜像，并通过 `--url` /
   `DRIVE_UPDATE_URL` / `config.json` 覆盖，同时把公钥一起分发。
 - 清单/产物缓存目录 `<data_dir>/updates/` 会在安装成功后清理下载文件；`update check` 不缓存清单。
+
+## 12. 当前部署：自建服务器更新通道
+
+当前实际分发已切到自建服务器（不依赖 GitHub Release）：
+
+| 通道 | 清单 | 产物目录 |
+|---|---|---|
+| 桌面 GUI | `https://sync.likecloud.top/updates/latest-gui.json` | `/updates/windows/DriveSync.exe` |
+| 桌面 CLI | `https://sync.likecloud.top/updates/latest-cli.json` | `/updates/windows/drive-sync.exe` |
+| Android | `https://sync.likecloud.top/android/latest.json` | `/android/DriveSync-*-buildN.apk` |
+
+服务器目录（在 `server/` 排除规则内，自动同步不会删除）：
+
+```text
+/home/ubuntu/drive-sync/server/updates/   # 桌面：latest-gui.json / latest-cli.json / windows/
+/home/ubuntu/drive-sync/server/android/   # Android：latest.json + APK
+```
+
+签名密钥：
+
+- 公钥（编译进 0.3.3 桌面客户端）：`20d2703d...ce7a70`
+- 私钥种子：只保存在本机 `server-update.signing-key.local`（已在 `.gitignore`），不要提交；
+- 换钥需同时重新编译 GUI/CLI 并重新发布清单，旧客户端会验签失败。
+
+本地发布流程：
+
+```powershell
+$env:DRIVE_UPDATE_URL = 'https://sync.likecloud.top/updates/latest-gui.json'
+$env:DRIVE_UPDATE_PUBKEY = '<pubkey>'
+cargo build --release -p drive-gui
+
+# 为产物生成 asset JSON → merge → sign
+gen-manifest asset --target x86_64-pc-windows-msvc `
+  --url https://sync.likecloud.top/updates/windows/DriveSync.exe `
+  --file DriveSync.exe --out assets-gui/asset-windows.json
+gen-manifest merge --version 0.3.3 --notes "..." --assets assets-gui --out latest-gui.json
+sign-manifest --key-hex <seed> -i latest-gui.json -o latest-gui.json
+```
+
+当前服务器只构建了 Windows 桌面 + Android；Linux/macOS 产物需要由对应 CI runner
+构建后按同一目录结构（`/updates/linux/`、`/updates/macos/`）补充清单。

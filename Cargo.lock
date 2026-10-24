@@ -1275,7 +1275,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "drive-cli"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "drive-client"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1323,7 +1323,7 @@ dependencies = [
 
 [[package]]
 name = "drive-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -1342,7 +1342,7 @@ dependencies = [
 
 [[package]]
 name = "drive-e2e"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "drive-gui"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "drive-mobile"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "drive-client",
@@ -1405,7 +1405,7 @@ dependencies = [
 
 [[package]]
 name = "drive-relay"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1423,7 +1423,7 @@ dependencies = [
 
 [[package]]
 name = "drive-updater"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "blake3",

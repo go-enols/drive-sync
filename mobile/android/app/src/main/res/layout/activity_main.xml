@@ -47,6 +47,14 @@
                     android:text="未连接" />
             </LinearLayout>
 
+            <com.google.android.material.progressindicator.CircularProgressIndicator
+                android:id="@+id/progressConnecting"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:indeterminate="true"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvSyncStatus"
                 style="@style/Text.DriveSync.Label"
@@ -372,6 +380,14 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="（未加载）" />
+
+            <com.google.android.material.progressindicator.LinearProgressIndicator
+                android:id="@+id/progressTransfer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:indeterminate="true"
+                android:visibility="gone" />
 
             <LinearLayout
                 android:id="@+id/layoutCatalog"

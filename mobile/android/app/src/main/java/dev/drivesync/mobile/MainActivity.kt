@@ -4,6 +4,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -11,6 +12,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.progressindicator.CircularProgressIndicator
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +38,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etJoinCode: TextInputEditText
     private lateinit var tvConnStatus: TextView
     private lateinit var tvSyncStatus: TextView
+    private lateinit var progressConnecting: CircularProgressIndicator
+    private lateinit var progressTransfer: LinearProgressIndicator
     private lateinit var tvPeers: TextView
     private lateinit var tvPairCode: TextView
     private lateinit var tvPairStatus: TextView
@@ -109,6 +114,8 @@ class MainActivity : AppCompatActivity() {
         etJoinCode = findViewById(R.id.etJoinCode)
         tvConnStatus = findViewById(R.id.tvConnStatus)
         tvSyncStatus = findViewById(R.id.tvSyncStatus)
+        progressConnecting = findViewById(R.id.progressConnecting)
+        progressTransfer = findViewById(R.id.progressTransfer)
         tvPeers = findViewById(R.id.tvPeers)
         tvPairCode = findViewById(R.id.tvPairCode)
         tvPairStatus = findViewById(R.id.tvPairStatus)
@@ -281,6 +288,7 @@ class MainActivity : AppCompatActivity() {
         window.decorView.postDelayed({
             if (AppState.handle != 0L && tvConnStatus.text?.contains("正在连接") == true) {
                 tvConnStatus.text = "连接超时：检查网络/VPN，或到设置「复制诊断日志」发给我"
+                progressConnecting.visibility = View.GONE
             }
         }, 20_000)
     }
@@ -571,14 +579,19 @@ class MainActivity : AppCompatActivity() {
     private fun onNativeEvent(event: JSONObject) {
         if (isFinishing || isDestroyed) return
         when (event.optString("type")) {
-            "started" -> tvConnStatus.text = "正在连接中继…"
+            "started" -> {
+                tvConnStatus.text = "正在连接中继…"
+                progressConnecting.visibility = View.VISIBLE
+            }
             "connected" -> {
                 tvConnStatus.text = "已连接中继"
+                progressConnecting.visibility = View.GONE
                 refreshPeersOnly()
             }
             "presence" -> {
                 val online = event.optJSONArray("online")?.length() ?: 0
                 tvConnStatus.text = "已连接 · 在线 $online 台"
+                progressConnecting.visibility = View.GONE
             }
             "peer_online", "peer_offline", "session_established", "session_closed",
             "peers_reloaded", "peer_revoked", "peer_unpaired" -> {
@@ -590,14 +603,37 @@ class MainActivity : AppCompatActivity() {
             "clipboard_applied" -> tvSyncStatus.text =
                 "收到远端剪切板 ${event.optLong("size")} 字节（来自 ${event.optString("peer_id")}）"
             "remote_clipboard_applied" -> tvClipboard.text = event.optString("preview")
+            "transfer_started" -> {
+                progressTransfer.isIndeterminate = true
+                progressTransfer.visibility = View.VISIBLE
+                tvSyncStatus.text = "正在接收文件…"
+            }
+            "transfer_progress" -> {
+                val total = event.optLong("total")
+                val received = event.optLong("received")
+                progressTransfer.visibility = View.VISIBLE
+                if (total > 0) {
+                    progressTransfer.isIndeterminate = false
+                    progressTransfer.max = total.toInt().coerceAtLeast(1)
+                    progressTransfer.progress = received.toInt().coerceIn(0, progressTransfer.max)
+                    tvSyncStatus.text =
+                        "下载中 ${formatSize(received)} / ${formatSize(total)}"
+                } else {
+                    progressTransfer.isIndeterminate = true
+                    tvSyncStatus.text = "下载中 ${formatSize(received)}"
+                }
+            }
             "transfer_received" -> {
+                progressTransfer.visibility = View.GONE
                 tvSyncStatus.text =
                     "文件已收到（${formatSize(event.optLong("size"))}），正在保存到 Downloads/drive-sync…"
             }
             "transfer_failed" -> {
+                progressTransfer.visibility = View.GONE
                 tvSyncStatus.text = "文件下载失败：${event.optString("message")}"
             }
             "file_saved" -> {
+                progressTransfer.visibility = View.GONE
                 tvSyncStatus.text = if (event.optBoolean("ok")) {
                     "已保存：Downloads/drive-sync/${event.optString("name")}"
                 } else {
@@ -617,10 +653,14 @@ class MainActivity : AppCompatActivity() {
                 AppState.lastError = message
                 tvConnStatus.text = "连接失败（自动重试中）"
                 tvSyncStatus.text = "错误：$message"
+                progressConnecting.visibility = View.GONE
             }
             "paused" -> tvSyncStatus.text =
                 if (event.optBoolean("paused")) "剪切板同步已暂停" else "剪切板同步已恢复"
-            "stopped" -> tvConnStatus.text = "连接已断开"
+            "stopped" -> {
+                tvConnStatus.text = "连接已断开"
+                progressConnecting.visibility = View.GONE
+            }
         }
     }
 
@@ -667,6 +707,7 @@ class MainActivity : AppCompatActivity() {
         btnDisconnect.isEnabled = started
         // handle 只表示原生运行时已启动，真正连上中继由 connected/presence 事件更新。
         tvConnStatus.text = if (started) "正在连接中继…" else "未连接"
+        progressConnecting.visibility = if (started) View.VISIBLE else View.GONE
     }
 
     private fun updateDisconnectedUi() {
@@ -674,6 +715,7 @@ class MainActivity : AppCompatActivity() {
         btnDisconnect.isEnabled = false
         tvConnStatus.text = "未连接"
         tvSyncStatus.text = "—"
+        progressConnecting.visibility = View.GONE
     }
 
     private fun formatPairCode(code: String): String {

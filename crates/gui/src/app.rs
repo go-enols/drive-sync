@@ -226,6 +226,14 @@ impl ShotPlan {
 // 主应用
 // ---------------------------------------------------------------------------
 
+/// 长耗时操作的顶部常驻指示（spinner/进度条），避免用户以为界面卡死。
+struct BusyState {
+    label: String,
+    started: Instant,
+    done: u64,
+    total: Option<u64>,
+}
+
 pub struct GuiApp {
     data_dir: PathBuf,
     _instance_guard: Option<platform::InstanceGuard>,
@@ -261,6 +269,7 @@ pub struct GuiApp {
     dialog: Dialog,
     toast: Option<Toast>,
     toast_at: Instant,
+    busy: Option<BusyState>,
     shots: Option<ShotPlan>,
     catalog_path_input: String,
     vault_upload_path: String,
@@ -388,6 +397,7 @@ impl GuiApp {
             dialog: Dialog::None,
             toast: None,
             toast_at: Instant::now(),
+            busy: None,
             shots,
             catalog_path_input: String::new(),
             vault_upload_path: String::new(),
@@ -542,6 +552,33 @@ impl GuiApp {
         ctx.request_repaint();
     }
 
+    fn begin_busy(&mut self, label: impl Into<String>) {
+        self.busy = Some(BusyState {
+            label: label.into(),
+            started: Instant::now(),
+            done: 0,
+            total: None,
+        });
+    }
+
+    fn set_busy_progress(&mut self, done: u64, total: u64) {
+        if let Some(busy) = self.busy.as_mut() {
+            busy.done = done;
+            busy.total = Some(total);
+        } else {
+            self.busy = Some(BusyState {
+                label: "处理中…".to_string(),
+                started: Instant::now(),
+                done,
+                total: Some(total),
+            });
+        }
+    }
+
+    fn end_busy(&mut self) {
+        self.busy = None;
+    }
+
     fn toast(&mut self, ok: bool, text: impl Into<String>) {
         self.toast = Some(Toast {
             text: text.into(),
@@ -679,6 +716,12 @@ impl GuiApp {
                 }
             }
             UiMsg::Event(event) => self.handle_runtime_event(event),
+            UiMsg::Progress { label, done, total } => {
+                if self.busy.is_none() {
+                    self.begin_busy(label);
+                }
+                self.set_busy_progress(done, total);
+            }
             UiMsg::PairState(progress) => {
                 logbuf::log(format!(
                     "配对进度: {} code={:?} peer={:?} sas={:?}",
@@ -725,14 +768,17 @@ impl GuiApp {
                 self.toast(ok, message);
             }
             UiMsg::CatalogAddResult { ok, message } => {
+                self.end_busy();
                 self.toast(ok, message);
                 self.refresh_store();
             }
             UiMsg::CatalogRemoveResult { ok, message } => {
+                self.end_busy();
                 self.toast(ok, message);
                 self.refresh_store();
             }
             UiMsg::FetchFinished { ok, message, path } => {
+                self.end_busy();
                 let line = if let Some(path) = &path {
                     format!("{} → {}", message, path.display())
                 } else {
@@ -746,6 +792,7 @@ impl GuiApp {
                 self.vault_items = items;
             }
             UiMsg::VaultOpDone { ok, message } => {
+                self.end_busy();
                 self.toast(ok, message);
                 self.refresh_store();
             }
@@ -832,11 +879,20 @@ impl GuiApp {
             | RuntimeEvent::CatalogReloaded { .. } => {
                 self.refresh_store();
             }
-            RuntimeEvent::TransferOffered { .. }
-            | RuntimeEvent::TransferStarted { .. }
-            | RuntimeEvent::TransferProgress { .. }
-            | RuntimeEvent::TransferReceived { .. }
-            | RuntimeEvent::TransferFailed { .. } => {
+            RuntimeEvent::TransferProgress {
+                received, total, ..
+            } => {
+                if self.busy.is_none() {
+                    self.begin_busy("正在传输文件…");
+                }
+                self.set_busy_progress(*received, *total);
+                push_limited(&mut self.transfer_lines, summary.clone(), TRANSFER_LIMIT);
+            }
+            RuntimeEvent::TransferReceived { .. } | RuntimeEvent::TransferFailed { .. } => {
+                self.end_busy();
+                push_limited(&mut self.transfer_lines, summary.clone(), TRANSFER_LIMIT);
+            }
+            RuntimeEvent::TransferOffered { .. } | RuntimeEvent::TransferStarted { .. } => {
                 push_limited(&mut self.transfer_lines, summary.clone(), TRANSFER_LIMIT);
             }
             RuntimeEvent::PeerRevoked { .. }
@@ -1626,6 +1682,28 @@ fn draw_main(app: &mut GuiApp, ctx: &egui::Context) {
                     );
                 });
                 theme::right_aligned(ui, |ui| {
+                    if let Some(busy) = app.busy.as_ref() {
+                        ui.add(egui::Spinner::new().size(14.0).color(theme::mint()));
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} {:.1}s",
+                                busy.label,
+                                busy.started.elapsed().as_secs_f32()
+                            ))
+                            .size(11.5)
+                            .color(theme::muted_color()),
+                        );
+                        if let Some(total) = busy.total.filter(|total| *total > 0) {
+                            let fraction = (busy.done as f32 / total as f32).clamp(0.0, 1.0);
+                            ui.add(
+                                egui::ProgressBar::new(fraction)
+                                    .desired_width(120.0)
+                                    .text(format!("{}/{}", busy.done, total)),
+                            );
+                        }
+                        ui.ctx().request_repaint();
+                        ui.add_space(4.0);
+                    }
                     if app.sync_state.is_running() {
                         if theme::secondary_button(ui, "停止同步") {
                             app.stop_sync();
@@ -2035,6 +2113,7 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
                 if path.as_os_str().is_empty() {
                     app.toast(false, "请先填写文件路径");
                 } else {
+                    app.begin_busy("正在计算文件哈希并登记目录…");
                     let _ = app.cmd_tx.send(Cmd::CatalogAdd { path });
                 }
             }
@@ -2050,14 +2129,14 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             if theme::primary_button(ui, "共享文件夹…") {
                 if let Some(dir) = platform::pick_folder("选择要共享的文件夹") {
-                    app.toast(true, format!("正在打包文件夹：{}", dir.display()));
+                    app.begin_busy(format!("正在扫描共享文件夹：{}", dir.display()));
                     let _ = app.cmd_tx.send(Cmd::ShareFolder { path: dir });
                 } else if !platform::browse_supported() {
                     app.toast(false, "当前平台暂未启用文件夹选择");
                 }
             }
             ui.label(theme::muted(
-                "整个文件夹会递归打包为 zip 登记到目录；已配对设备获取后解压，源文件不会被移动。",
+                "文件夹按目录树逐文件登记并监听变更；已配对设备可浏览目录、逐个下载，源文件不会被移动。",
             ));
         });
     });
@@ -2164,6 +2243,7 @@ fn page_catalog(app: &mut GuiApp, ui: &mut egui::Ui) {
                             .any(|entries| entries.iter().any(|id| id == &entry.id))
                             && theme::secondary_button(ui, "从对端获取")
                         {
+                            app.begin_busy(format!("正在获取 {}…", entry.name));
                             let _ = app.cmd_tx.send(Cmd::FetchCatalog {
                                 entry_id: entry.id.clone(),
                                 out_dir: app.data_dir.join("incoming"),
@@ -2210,6 +2290,7 @@ fn page_vault(app: &mut GuiApp, ui: &mut egui::Ui) {
                 if path.as_os_str().is_empty() {
                     app.toast(false, "请先填写上传文件路径");
                 } else {
+                    app.begin_busy("正在加密并上传…");
                     let _ = app.cmd_tx.send(Cmd::VaultPut {
                         path,
                         ttl_days: app.vault_ttl_days,
@@ -2268,6 +2349,7 @@ fn page_vault(app: &mut GuiApp, ui: &mut egui::Ui) {
                     ui.label(theme::muted(platform::human_bytes(item.size)));
                     ui.label(theme::muted(platform::format_ms(item.expires_at_ms)));
                     if theme::secondary_button(ui, "下载解密") {
+                        app.begin_busy(format!("正在下载并解密 {}…", item.name));
                         let _ = app.cmd_tx.send(Cmd::VaultGet {
                             object_id: item.object_id.clone(),
                             out_dir: PathBuf::from(&app.vault_download_dir),
@@ -2930,6 +3012,7 @@ fn render_share_tree(ui: &mut egui::Ui, app: &mut GuiApp, node: &ShareTreeNode, 
                 // 即使当前没有在线持有设备也显示下载入口，后台会等待/报错，
                 // 避免用户只“看得见”却没有任何操作。
                 if theme::secondary_button(ui, "下载") {
+                    app.begin_busy(format!("正在下载 {file}…"));
                     let _ = app.cmd_tx.send(Cmd::FetchCatalog {
                         entry_id: entry.id.clone(),
                         out_dir: app.data_dir.join("incoming"),

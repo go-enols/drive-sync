@@ -86,6 +86,12 @@ pub enum UiMsg {
         reason: String,
     },
     Event(RuntimeEvent),
+    /// 长耗时操作进度（文件夹扫描/登记等）。
+    Progress {
+        label: String,
+        done: u64,
+        total: u64,
+    },
     PairState(PairProgress),
     PairFinished {
         ok: bool,
@@ -624,7 +630,8 @@ fn handle_command(state: &mut BackendState, command: Cmd) -> bool {
             }
             logbuf::log(format!("开始扫描要共享的文件夹: {}", path.display()));
             state.tokio.spawn(async move {
-                let (ok, message) = match share_folder_now(data_dir, handle, path).await {
+                let (ok, message) =
+                    match share_folder_now(data_dir, handle, path, Some(msg_tx.clone())).await {
                     Ok((folder_name, added, failed)) if added > 0 => (
                         true,
                         format!(
@@ -658,7 +665,7 @@ fn handle_command(state: &mut BackendState, command: Cmd) -> bool {
             let path = folder.path.clone();
             logbuf::log(format!("共享文件夹有变更，重新扫描: {}", path.display()));
             state.tokio.spawn(async move {
-                match share_folder_now(data_dir, handle, path.clone()).await {
+                match share_folder_now(data_dir, handle, path.clone(), None).await {
                     Ok((name, added, failed)) => {
                         logbuf::log(format!(
                             "共享文件夹「{name}」已刷新：{added} 个文件{}",
@@ -1266,6 +1273,7 @@ async fn share_folder_now(
     data_dir: PathBuf,
     handle: Option<RuntimeHandle>,
     path: PathBuf,
+    progress: Option<Sender<UiMsg>>,
 ) -> Result<(String, usize, usize)> {
     let scan_path = path.clone();
     let (folder_name, files) = tokio::task::spawn_blocking(move || scan_folder_files(&scan_path))
@@ -1296,6 +1304,14 @@ async fn share_folder_now(
     }
     let mut added = 0usize;
     let mut failed = 0usize;
+    let total_files = files.len() as u64;
+    if let Some(tx) = progress.as_ref() {
+        let _ = tx.send(UiMsg::Progress {
+            label: format!("正在登记共享文件夹「{folder_name}」"),
+            done: 0,
+            total: total_files,
+        });
+    }
     for (file_path, relative) in files {
         let mut params = CatalogAddParams::new(&file_path);
         params.name = relative.clone();
@@ -1319,6 +1335,16 @@ async fn share_folder_now(
             Err(error) => {
                 failed += 1;
                 logbuf::log(format!("共享文件失败 {relative}: {error}"));
+            }
+        }
+        let done = (added + failed) as u64;
+        if let Some(tx) = progress.as_ref() {
+            if done % 5 == 0 || done == total_files {
+                let _ = tx.send(UiMsg::Progress {
+                    label: format!("正在登记共享文件夹「{folder_name}」"),
+                    done,
+                    total: total_files,
+                });
             }
         }
     }

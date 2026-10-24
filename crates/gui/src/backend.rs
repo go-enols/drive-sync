@@ -5,14 +5,14 @@
 //! - 本模块的后台线程持有 tokio Runtime（全局唯一），负责 `Runtime::run()`、配对、一次性网络操作；
 //! - 另一个独立线程轮询本机剪切板（arboard，默认 800ms，哈希去重）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use drive_client::{
@@ -199,12 +199,30 @@ pub enum Cmd {
     OpDone,
 }
 
+/// 共享文件夹中已登记文件的状态，用于监听后的增量对比（大小/mtime 未变则不重扫）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SharedFileState {
+    relative: String,
+    entry_id: String,
+    size: u64,
+    mtime_ms: u64,
+}
+
+struct ScannedFile {
+    path: PathBuf,
+    relative: String,
+    size: u64,
+    mtime_ms: u64,
+}
+
 /// 一个被共享的文件夹（持久化到 `<data_dir>/shared_folders.json`，App 重启后恢复监听）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SharedFolder {
     id: String,
     name: String,
     path: PathBuf,
+    #[serde(default)]
+    files: Vec<SharedFileState>,
 }
 
 fn shared_folders_path(data_dir: &Path) -> PathBuf {
@@ -614,10 +632,14 @@ fn handle_command(state: &mut BackendState, command: Cmd) -> bool {
                 .file_name()
                 .map(|value| value.to_string_lossy().to_string())
                 .unwrap_or_else(|| "共享文件夹".to_string());
+            let existing = load_shared_folders(&data_dir)
+                .into_iter()
+                .find(|share| share.id == share_id);
             let folder = SharedFolder {
                 id: share_id,
                 name: share_name,
                 path: path.clone(),
+                files: existing.map(|share| share.files).unwrap_or_default(),
             };
             let mut shares = load_shared_folders(&data_dir);
             shares.retain(|share| share.id != folder.id);
@@ -631,21 +653,17 @@ fn handle_command(state: &mut BackendState, command: Cmd) -> bool {
             logbuf::log(format!("开始扫描要共享的文件夹: {}", path.display()));
             state.tokio.spawn(async move {
                 let (ok, message) =
-                    match share_folder_now(data_dir, handle, path, Some(msg_tx.clone())).await {
-                    Ok((folder_name, added, failed)) if added > 0 => (
-                        true,
+                    match share_folder_now(data_dir, handle, folder, Some(msg_tx.clone())).await {
+                    Ok((folder_name, changed, failed)) => (
+                        failed == 0,
                         format!(
-                            "已共享文件夹「{folder_name}」：{added} 个文件已登记，对方可在目录中按层级浏览并逐个下载{}",
+                            "已共享文件夹「{folder_name}」：本次更新 {changed} 个文件（其余未变化），对方可在目录中按层级浏览并逐个下载{}",
                             if failed > 0 {
                                 format!("（{failed} 个失败，详见日志）")
                             } else {
                                 String::new()
                             }
                         ),
-                    ),
-                    Ok((folder_name, _, _)) => (
-                        false,
-                        format!("共享文件夹「{folder_name}」失败：没有成功登记任何文件"),
                     ),
                     Err(error) => (false, format!("共享文件夹失败: {error:#}")),
                 };
@@ -665,7 +683,7 @@ fn handle_command(state: &mut BackendState, command: Cmd) -> bool {
             let path = folder.path.clone();
             logbuf::log(format!("共享文件夹有变更，重新扫描: {}", path.display()));
             state.tokio.spawn(async move {
-                match share_folder_now(data_dir, handle, path.clone(), None).await {
+                match share_folder_now(data_dir, handle, folder, None).await {
                     Ok((name, added, failed)) => {
                         logbuf::log(format!(
                             "共享文件夹「{name}」已刷新：{added} 个文件{}",
@@ -1180,11 +1198,11 @@ fn catalog_add_offline(data_dir: &Path, params: &CatalogAddParams) -> Result<Str
 /// 共享文件夹时单个目录最多登记的文件数，避免一次生成过多目录条目。
 const MAX_SHARE_FILES: usize = 5000;
 
-/// 扫描文件夹，返回 `(文件夹展示名, [(本机绝对路径, 相对路径)])`。
+/// 扫描文件夹，返回 `(文件夹展示名, 文件列表（含大小/mtime）)`。
 ///
 /// 使用显式栈而非递归，避免超深目录导致栈溢出；只读源文件夹，跳过符号链接；
 /// 相对路径统一使用 `/`，供对端按层级浏览。
-fn scan_folder_files(folder: &Path) -> Result<(String, Vec<(PathBuf, String)>)> {
+fn scan_folder_files(folder: &Path) -> Result<(String, Vec<ScannedFile>)> {
     if !folder.is_dir() {
         bail!("选择的路径不是文件夹: {}", folder.display());
     }
@@ -1213,7 +1231,19 @@ fn scan_folder_files(folder: &Path) -> Result<(String, Vec<(PathBuf, String)>)> 
                     .with_context(|| format!("计算相对路径失败: {}", path.display()))?
                     .to_string_lossy()
                     .replace('\\', "/");
-                files.push((path, relative));
+                let metadata = entry.metadata()?;
+                let mtime_ms = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or(0);
+                files.push(ScannedFile {
+                    path,
+                    relative,
+                    size: metadata.len(),
+                    mtime_ms,
+                });
                 if files.len() > MAX_SHARE_FILES {
                     bail!(
                         "文件夹内文件过多（超过 {} 个），请分文件夹共享",
@@ -1266,55 +1296,64 @@ fn restore_shared_folders(state: &mut BackendState) {
     }
 }
 
-/// 全量刷新一个共享文件夹：移除该 share 的旧条目后重新登记当前文件。
+/// 增量刷新一个共享文件夹：只处理新增/修改/删除的文件。
 ///
-/// 监听事件/启动恢复使用；为控制实现复杂度先做全量替换，后续可按 mtime/hash 增量。
+/// 监听事件/启动恢复使用；大小与 mtime 都没变的文件不会重新计算哈希或重新登记，
+/// 避免每次文件变动都把整个文件夹删掉重加、导致对端目录条目大幅抖动。
 async fn share_folder_now(
     data_dir: PathBuf,
     handle: Option<RuntimeHandle>,
-    path: PathBuf,
+    mut folder: SharedFolder,
     progress: Option<Sender<UiMsg>>,
 ) -> Result<(String, usize, usize)> {
-    let scan_path = path.clone();
+    let scan_path = folder.path.clone();
     let (folder_name, files) = tokio::task::spawn_blocking(move || scan_folder_files(&scan_path))
         .await
         .context("扫描文件夹任务失败")??;
-    let share_id = blake3_hex(path.to_string_lossy().as_bytes())
-        .chars()
-        .take(8)
-        .collect::<String>();
-    let share_id_tag = format!("share-id:{share_id}");
-    let share_name_tag = format!("share-name:{folder_name}");
-    let store = Store::open(&data_dir)?;
-    let (catalog, _) = store.load_catalog()?;
-    let old_ids: Vec<String> = catalog
-        .visible()
-        .filter(|entry| entry.tags.iter().any(|tag| tag == &share_id_tag))
-        .map(|entry| entry.id.clone())
+    let share_id_tag = format!("share-id:{}", folder.id);
+    let share_name_tag = format!("share-name:{}", folder_name);
+    let mut previous: HashMap<String, SharedFileState> = folder
+        .files
+        .drain(..)
+        .map(|state| (state.relative.clone(), state))
         .collect();
-    for id in old_ids {
-        match handle.as_ref() {
-            Some(handle) => {
-                let _ = handle.catalog_remove(id).await;
-            }
-            None => {
-                let _ = catalog_remove_offline(&data_dir, &id);
-            }
-        }
-    }
-    let mut added = 0usize;
+    let mut next_files = Vec::with_capacity(files.len());
+    let mut seen = HashSet::new();
+    let mut changed = 0usize;
     let mut failed = 0usize;
     let total_files = files.len() as u64;
     if let Some(tx) = progress.as_ref() {
         let _ = tx.send(UiMsg::Progress {
-            label: format!("正在登记共享文件夹「{folder_name}」"),
+            label: format!("正在更新共享文件夹「{folder_name}」"),
             done: 0,
             total: total_files,
         });
     }
-    for (file_path, relative) in files {
-        let mut params = CatalogAddParams::new(&file_path);
-        params.name = relative.clone();
+    for scanned in files {
+        seen.insert(scanned.relative.clone());
+        let unchanged = previous.get(&scanned.relative).is_some_and(|state| {
+            state.size == scanned.size
+                && state.mtime_ms == scanned.mtime_ms
+                && !state.entry_id.is_empty()
+        });
+        if unchanged {
+            next_files.push(previous.remove(&scanned.relative).expect("checked"));
+            continue;
+        }
+        if let Some(state) = previous.remove(&scanned.relative) {
+            if !state.entry_id.is_empty() {
+                match handle.as_ref() {
+                    Some(handle) => {
+                        let _ = handle.catalog_remove(state.entry_id).await;
+                    }
+                    None => {
+                        let _ = catalog_remove_offline(&data_dir, &state.entry_id);
+                    }
+                }
+            }
+        }
+        let mut params = CatalogAddParams::new(&scanned.path);
+        params.name = scanned.relative.clone();
         params.kind = "file".to_string();
         params.platform = TargetPlatform::Any;
         params.tags = vec![
@@ -1331,24 +1370,55 @@ async fn share_folder_now(
             None => catalog_add_offline(&data_dir, &params).map_err(|error| format!("{error:#}")),
         };
         match result {
-            Ok(_) => added += 1,
+            Ok(entry_id) => {
+                next_files.push(SharedFileState {
+                    relative: scanned.relative.clone(),
+                    entry_id,
+                    size: scanned.size,
+                    mtime_ms: scanned.mtime_ms,
+                });
+                changed += 1;
+            }
             Err(error) => {
                 failed += 1;
-                logbuf::log(format!("共享文件失败 {relative}: {error}"));
+                logbuf::log(format!("共享文件失败 {}: {error}", scanned.relative));
             }
         }
-        let done = (added + failed) as u64;
+        let done = (changed + failed) as u64;
         if let Some(tx) = progress.as_ref() {
             if done % 5 == 0 || done == total_files {
                 let _ = tx.send(UiMsg::Progress {
-                    label: format!("正在登记共享文件夹「{folder_name}」"),
+                    label: format!("正在更新共享文件夹「{folder_name}」"),
                     done,
                     total: total_files,
                 });
             }
         }
     }
-    Ok((folder_name, added, failed))
+    // 已从文件夹删除的文件：从目录里移除。
+    for (_, state) in previous {
+        if state.entry_id.is_empty() {
+            continue;
+        }
+        match handle.as_ref() {
+            Some(handle) => {
+                let _ = handle.catalog_remove(state.entry_id).await;
+            }
+            None => {
+                let _ = catalog_remove_offline(&data_dir, &state.entry_id);
+            }
+        }
+    }
+    folder.name = folder_name.clone();
+    folder.files = next_files;
+    let mut shares = load_shared_folders(&data_dir);
+    if let Some(slot) = shares.iter_mut().find(|share| share.id == folder.id) {
+        *slot = folder.clone();
+    } else {
+        shares.push(folder.clone());
+    }
+    save_shared_folders(&data_dir, &shares)?;
+    Ok((folder_name, changed, failed))
 }
 
 fn catalog_remove_offline(data_dir: &Path, id: &str) -> Result<()> {
@@ -1464,9 +1534,58 @@ mod tests {
 
         let (name, files) = scan_folder_files(&source).unwrap();
         assert_eq!(name, "source-folder");
-        let paths: Vec<String> = files.iter().map(|(_, relative)| relative.clone()).collect();
+        let paths: Vec<String> = files.iter().map(|file| file.relative.clone()).collect();
         assert!(paths.contains(&"a.txt".to_string()));
         assert!(paths.contains(&"sub/b.txt".to_string()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn share_folder_incremental_add_modify_delete() {
+        let root = std::env::temp_dir().join(format!("drive-sync-share-inc-{}", now_ms()));
+        let data = root.join("data");
+        let store = Store::open(&data).unwrap();
+        let _ = store.load_or_create_identity("test-device").unwrap();
+        let source = root.join("my-folder");
+        fs::create_dir_all(source.join("sub")).unwrap();
+        let file_a = source.join("a.txt");
+        fs::write(&file_a, b"hello").unwrap();
+        fs::write(source.join("sub").join("b.txt"), b"world").unwrap();
+
+        let mut folder = SharedFolder {
+            id: "test-share".to_string(),
+            name: "my-folder".to_string(),
+            path: source.clone(),
+            files: Vec::new(),
+        };
+        let (_, changed, failed) = share_folder_now(data.clone(), None, folder.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!((changed, failed), (2, 0));
+        folder = load_shared_folders(&data)
+            .into_iter()
+            .find(|share| share.id == "test-share")
+            .expect("share record");
+        assert_eq!(folder.files.len(), 2);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&file_a, b"hello changed").unwrap();
+        let (_, changed, failed) = share_folder_now(data.clone(), None, folder.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!((changed, failed), (1, 0));
+        folder = load_shared_folders(&data)
+            .into_iter()
+            .find(|share| share.id == "test-share")
+            .expect("share record");
+        assert_eq!(folder.files.len(), 2);
+
+        fs::remove_file(&file_a).unwrap();
+        share_folder_now(data.clone(), None, folder, None)
+            .await
+            .unwrap();
+        let (catalog, _) = Store::open(&data).unwrap().load_catalog().unwrap();
+        assert_eq!(catalog.visible_count(), 1);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1481,9 +1600,9 @@ mod tests {
         fs::write(source.join("sub").join("b.txt"), b"world").unwrap();
 
         let (_, files) = scan_folder_files(&source).unwrap();
-        let (path, relative) = files.first().unwrap();
-        let mut params = CatalogAddParams::new(path);
-        params.name = relative.clone();
+        let file = files.first().unwrap();
+        let mut params = CatalogAddParams::new(&file.path);
+        params.name = file.relative.clone();
         params.kind = "file".to_string();
         params.platform = TargetPlatform::Any;
         params.tags = vec![

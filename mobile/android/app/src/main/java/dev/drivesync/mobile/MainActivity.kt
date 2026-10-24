@@ -492,9 +492,27 @@ class MainActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density
         val rowPadding = (6 * density).toInt()
         val maxRows = 300
-        val shown = minOf(entries.length(), maxRows)
+        val items = (0 until entries.length())
+            .mapNotNull { entries.optJSONObject(it) }
+            .sortedBy { it.optString("name") }
+        val shown = minOf(items.size, maxRows)
+        var currentDir: String? = null
         for (index in 0 until shown) {
-            val entry = entries.optJSONObject(index) ?: continue
+            val entry = items[index]
+            val entryName = entry.optString("name")
+            val firstDir = entryName.substringBefore('/')
+            if (entryName.contains('/') && firstDir != currentDir) {
+                currentDir = firstDir
+                val header = TextView(this).apply {
+                    text = "📁 $firstDir/"
+                    textSize = 13f
+                    setTextColor(getColor(R.color.mint))
+                    setPadding(0, (8 * density).toInt(), 0, (2 * density).toInt())
+                }
+                layoutCatalog.addView(header)
+            } else if (!entryName.contains('/')) {
+                currentDir = null
+            }
             val local = entry.optBoolean("local")
             val holders = entry.optJSONArray("holders")?.length() ?: 0
             val row = LinearLayout(this).apply {

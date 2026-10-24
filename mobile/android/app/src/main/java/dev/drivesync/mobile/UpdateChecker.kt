@@ -13,16 +13,23 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 更新检查：读取 GitHub Releases 最新版本，比较当前 App 版本。
+ * 更新检查：读取自建服务器上的 Android 更新清单（不再依赖 GitHub Release）。
  *
- * 说明：
- * - Android 侧载应用无法静默安装（需要系统权限/应用商店），因此这里只做“检查 +
- *   打开 APK/Release 下载页”，安装交给系统包安装器；
- * - 自动检查每天最多一次（打开 App 时触发），发现新版本弹窗提示；
- * - 网络/API 失败只提示，不影响同步功能。
+ * 清单示例（`https://sync.likecloud.top/android/latest.json`）：
+ * {
+ *   "versionCode": 7,
+ *   "versionName": "0.3.2",
+ *   "url": "https://sync.likecloud.top/android/DriveSync-...apk",
+ *   "size": 25590895,
+ *   "sha256": "...",
+ *   "notes": "更新说明"
+ * }
+ *
+ * 说明：Android 侧载应用不能静默安装；这里只做“检查 + 打开 APK 下载”，安装由系统完成。
+ * 自动检查每天最多一次（打开 App 时触发）。
  */
 object UpdateChecker {
-    private const val API_URL = "https://api.github.com/repos/go-enols/drive-sync/releases/latest"
+    private const val MANIFEST_URL = "https://sync.likecloud.top/android/latest.json"
     private const val PREFS = "drive_sync_update"
     private const val KEY_LAST_CHECK = "last_check_ms"
     private const val KEY_AUTO_CHECK = "auto_check"
@@ -31,11 +38,14 @@ object UpdateChecker {
     private val main = Handler(Looper.getMainLooper())
 
     data class Info(
-        val latest: String,
-        val current: String,
+        val latestVersion: String,
+        val latestBuild: Long,
+        val currentVersion: String,
+        val currentBuild: Long,
         val notes: String,
-        val downloadUrl: String?,
-        val releaseUrl: String,
+        val downloadUrl: String,
+        val size: Long,
+        val sha256: String,
     )
 
     data class Result(
@@ -110,74 +120,64 @@ object UpdateChecker {
     }
 
     private fun fetch(context: Context): Result {
-        val connection = (URL(API_URL).openConnection() as HttpURLConnection).apply {
+        val connection = (URL(MANIFEST_URL).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 15_000
             instanceFollowRedirects = true
-            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "drive-sync-android")
         }
         try {
             val code = connection.responseCode
             if (code !in 200..299) {
-                val detail = connection.errorStream
-                    ?.bufferedReader(Charsets.UTF_8)
-                    ?.use { it.readText() }
-                    ?.take(200)
-                    .orEmpty()
-                throw IllegalStateException("GitHub API HTTP $code${if (detail.isBlank()) "" else "：$detail"}")
+                throw IllegalStateException("更新清单 HTTP $code")
             }
             val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
             val json = JSONObject(body)
-            val latest = json.optString("tag_name").trim().removePrefix("v")
-            val current = currentVersion(context)
-            val releaseUrl = json.optString("html_url")
-            val notes = json.optString("body").trim()
-            var apkUrl: String? = null
-            val assets = json.optJSONArray("assets")
-            if (assets != null) {
-                for (index in 0 until assets.length()) {
-                    val asset = assets.optJSONObject(index) ?: continue
-                    val name = asset.optString("name")
-                    if (name.endsWith(".apk", ignoreCase = true)) {
-                        apkUrl = asset.optString("browser_download_url")
-                        break
-                    }
-                }
+            val latestBuild = json.optLong("versionCode", 0L)
+            val latestVersion = json.optString("versionName").trim().ifEmpty { "unknown" }
+            val downloadUrl = json.optString("url").trim()
+            val size = json.optLong("size", 0L)
+            val sha256 = json.optString("sha256").trim()
+            val notes = json.optString("notes").trim()
+            if (downloadUrl.isBlank()) {
+                throw IllegalStateException("更新清单没有 APK 下载地址")
             }
-            val available = latest.isNotEmpty() && compareVersions(latest, current) > 0
-            val message = if (available) {
-                "发现新版本 v$latest（当前 v$current）"
-            } else {
-                "已是最新版本 v$current"
-            }
+            val currentVersion = currentVersion(context)
+            val currentBuild = currentBuild(context)
+            val available = latestBuild > currentBuild
             return Result(
                 available = available,
                 info = Info(
-                    latest = latest.ifEmpty { current },
-                    current = current,
+                    latestVersion = latestVersion,
+                    latestBuild = latestBuild,
+                    currentVersion = currentVersion,
+                    currentBuild = currentBuild,
                     notes = notes,
-                    downloadUrl = apkUrl,
-                    releaseUrl = releaseUrl,
+                    downloadUrl = downloadUrl,
+                    size = size,
+                    sha256 = sha256,
                 ),
-                message = message,
+                message = if (available) {
+                    "发现新版本 v$latestVersion (build $latestBuild，当前 build $currentBuild)"
+                } else {
+                    "已是最新版本 v$currentVersion (build $currentBuild)"
+                },
             )
         } finally {
             connection.disconnect()
         }
     }
 
-    /** 打开 APK 直链；没有 APK 产物时退回 Release 页面。 */
+    /** 打开 APK 下载地址（浏览器/系统下载器负责下载与安装）。 */
     fun openDownload(context: Context, info: Info) {
-        val url = info.downloadUrl?.takeIf { it.isNotBlank() }
-            ?: info.releaseUrl.takeIf { it.isNotBlank() }
-        if (url.isNullOrBlank()) {
+        if (info.downloadUrl.isBlank()) {
             Toast.makeText(context, "没有可用的下载地址", Toast.LENGTH_SHORT).show()
             return
         }
         try {
             context.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         } catch (error: Throwable) {
@@ -187,13 +187,15 @@ object UpdateChecker {
 
     fun showDialog(activity: Activity, info: Info) {
         val message = buildString {
-            append("当前版本 v").append(info.current)
-            append(" → 最新版本 v").append(info.latest)
+            append("当前 v").append(info.currentVersion)
+            append("（build ").append(info.currentBuild).append("）")
+            append(" → 最新 v").append(info.latestVersion)
+            append("（build ").append(info.latestBuild).append("）")
+            if (info.size > 0) {
+                append("\n大小：").append(String.format("%.1f MiB", info.size / 1024.0 / 1024.0))
+            }
             if (info.notes.isNotBlank()) {
                 append("\n\n").append(info.notes.take(1200))
-            }
-            if (info.downloadUrl == null) {
-                append("\n\n（Release 中没有找到 APK 产物，将打开 Release 页面）")
             }
         }
         MaterialAlertDialogBuilder(activity)
@@ -202,25 +204,5 @@ object UpdateChecker {
             .setPositiveButton("去下载") { _, _ -> openDownload(activity, info) }
             .setNegativeButton("稍后", null)
             .show()
-    }
-
-    private fun compareVersions(left: String, right: String): Int {
-        val a = versionParts(left)
-        val b = versionParts(right)
-        val count = maxOf(a.size, b.size)
-        for (index in 0 until count) {
-            val x = a.getOrElse(index) { 0 }
-            val y = b.getOrElse(index) { 0 }
-            if (x != y) return x.compareTo(y)
-        }
-        return 0
-    }
-
-    private fun versionParts(version: String): List<Int> {
-        val cleaned = version.trim().removePrefix("v")
-        if (cleaned.isEmpty()) return emptyList()
-        return cleaned
-            .split('.', '-', '+', '_')
-            .mapNotNull { part -> part.takeWhile { it.isDigit() }.toIntOrNull() }
     }
 }

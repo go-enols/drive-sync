@@ -12,9 +12,8 @@ android {
         applicationId = "dev.drivesync.mobile"
         minSdk = 29
         targetSdk = 36
-        // 6：加入“检查更新 / 自动检查”构建；versionName 与 GitHub Release 标签保持一致，
-        // 更新比较用 versionName，versionCode 只用于 Android 覆盖安装。
-        versionCode = 6
+        // 7：更新检查改为自建服务器清单；versionCode 用于覆盖安装与更新比较。
+        versionCode = 7
         versionName = "0.3.2"
 
         // Rust cdylib 由 cargo-ndk 产出到 src/main/jniLibs/<abi>/
